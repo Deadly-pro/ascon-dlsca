@@ -5,3 +5,4 @@ scipy
 scikit-learn
 chipwhisperer==6.0.0
 tensorflow
+ascon

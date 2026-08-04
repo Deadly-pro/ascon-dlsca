@@ -12,7 +12,8 @@ Hardware security research: **side-channel analysis (power/EM) of the ASCON ligh
 - `ascon-hw-public/` — upstream reference ASCON hardware repo (gitignored; cores are vendored into `vivado_ascon/src/ascon/`).
 - `chipwhisperer/` — local ChipWhisperer source tree (gitignored; capture scripts use the pip-installed `chipwhisperer` 6.0.0).
 - `Dataset/` — captured traces (`ascon_dataset.h5`: 1000 × 20000 power traces + key/nonce/ct).
-- Root scripts: `capture_cw305_traces.py`, `program_cw305.py`, `program_ascon_fpga.py`, `check_board.py`, `check_spi_bridge.py`, `regen_and_run.sh`.
+- Root scripts: `capture_cw305_traces.py` (raw capture), `collect_dataset.py` (synchronized + per-trace-verified dataset collection), `sanity_check.py` (known-vector check vs `ascon_ref.py`), `view_dataset.py` (EDA plots), `program_cw305.py`, `program_ascon_fpga.py`, `check_board.py`, `check_spi_bridge.py`, `regen_and_run.sh`.
+- `ascon_ref.py` — ASCON-128 oracle for the CW305 core (official `ascon` pip pkg), validated against the vendored HDL's testbench vectors (`ascon-hw-public/testbench/output.txt`).
 
 ## Build (bitstream, no board needed, ~30–45 min)
 
