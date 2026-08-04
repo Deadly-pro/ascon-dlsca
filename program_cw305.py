@@ -6,11 +6,13 @@ No CW-Lite needed. The CW305 programs over its own USB (2b3e:c305).
 Usage:
     python3 program_cw305.py [path/to/ascon_cw305_top.bit]
 """
+import os
 import sys
 import chipwhisperer as cw
 
 def main():
-    BIT = "/home/deadly-pro/ascon/vivado_ascon/ascon_cw305_top.bit"
+    BIT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "vivado_ascon", "ascon_cw305_top.bit")
     if len(sys.argv) > 1:
         BIT = sys.argv[1]
 

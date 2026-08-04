@@ -26,7 +26,8 @@ import h5py
 import numpy as np
 import chipwhisperer as cw
 
-BIT = "/home/deadly-pro/ascon/vivado_ascon/ascon_cw305_top.bit"
+BIT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   "vivado_ascon", "ascon_cw305_top.bit")
 
 
 def _drain(target, timeout=1.0):
