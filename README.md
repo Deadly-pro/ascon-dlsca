@@ -8,6 +8,10 @@ CPA/DPA and deep-learning (DL-SCA) key recovery.
 
 ```
 capture_cw305_traces.py   # power-trace capture (CW305 + CW-Lite, register API)
+collect_dataset.py        # synchronized dataset collection + per-trace verify
+sanity_check.py           # known-vector check of the core vs ascon_ref.py oracle
+view_dataset.py           # EDA plots of a captured dataset (leakage scan, FFT, ...)
+ascon_ref.py              # ASCON-128 oracle (official `ascon` pkg, validated vs HDL)
 program_cw305.py          # program bitstream into SPI flash (CW305's own USB)
 program_ascon_fpga.py     # load bitstream into FPGA fabric over USB (volatile)
 check_board.py            # CW305/CW-Lite connectivity check
