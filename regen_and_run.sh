@@ -11,7 +11,7 @@
 #   bash regen_and_build.sh sim    # only re-run simulation sanity
 set -e
 cd "$(dirname "$0")"
-VIV=/tools/2026.1/Vivado/bin/vivado
+VIV="${VIVADO_PATH:-/tools/2026.1/Vivado/bin/vivado}"
 PROJ=vivado_ascon
 
 echo "==> Clearing stale simulation artifacts"

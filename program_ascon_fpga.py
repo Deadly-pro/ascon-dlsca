@@ -9,11 +9,13 @@ Requires mode switches set to USB (M0=1 M1=1 M2=1).
 Usage:
     python3 program_ascon_fpga.py [path/to/ascon_cw305_top.bit]
 """
+import os
 import sys
 import chipwhisperer as cw
 
 def main():
-    BIT = "/home/deadly-pro/ascon/vivado_ascon/ascon_cw305_top.bit"
+    BIT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "vivado_ascon", "ascon_cw305_top.bit")
     if len(sys.argv) > 1:
         BIT = sys.argv[1]
 
