@@ -122,7 +122,6 @@ def main():
         if ret:
             print(f"    trace {i}: trigger timeout, skipping")
             _drain(t)
-            fails += 1
             continue
 
         ct = bytes(t.readOutput())
@@ -143,10 +142,6 @@ def main():
 
         if trace.std() < args.std_floor:
             flats += 1; continue
-
-        if trace.std() < args.std_floor:
-            print(f"    trace {i}: FLAT (std={trace.std():.4f}) — skipping")
-            fails += 1; continue
 
         traces.append(trace)
         keys.append(key)
