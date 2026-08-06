@@ -1,0 +1,7 @@
+# DL-SCA training environment (CPU torch is plenty for these datasets)
+numpy
+h5py
+scipy
+matplotlib
+scikit-learn
+torch

@@ -14,11 +14,17 @@ Output h5 (training-ready):
            verified, num_traces, source_bitstream
 
 Confirmed settings:
-    gain      = 25 dB programmable (+ ~20 dB fixed external -> ~45 dB total)
+    gain      = 20 dB programmable (+ ~20 dB fixed external -> ~40 dB total)
     adc_src   = clkgen_x4 (40 MHz, free-running)
-    samples   = 24000 (>24430 causes CW-Lite buffer underrun)
+    samples   = 2000 (0-50 us; the crypto op lives in the first ~50 us.
+               Larger windows only add idle/USB-re-enable noise and dilute SNR.)
     crypto    = 10.0 MHz (PLL1, verified via pll_outfreq_get)
     tio_clkout enabled via REG_CLKSETTINGS = 0x19
+
+Quality filters (per trace, before storage):
+    verify   : readback must match the ASCON oracle (unless --no-verify)
+    clip     : reject if |trace|.max() > clip-threshold (0.49 V = ADC rail)
+    flat     : reject if trace.std() < std-floor (0.01 V = dead capture)
 
 Usage:
     python3 collect_dataset.py -n 1000 -o Dataset/run.h5
@@ -49,7 +55,8 @@ def main():
     ap.add_argument('-b', '--bitstream',
                     default=os.path.join(here, 'vivado_ascon', 'ascon_cw305_top.bit'))
     ap.add_argument('-n', '--num', type=int, default=1000, help='traces to collect')
-    ap.add_argument('-s', '--samples', type=int, default=24000)
+    ap.add_argument('-s', '--samples', type=int, default=2000,
+                    help='samples per trace (2000 = 0-50 us @ 40 MHz)')
     ap.add_argument('-o', '--output', default=os.path.join(here, 'Dataset', 'ascon_dataset.h5'))
     ap.add_argument('--key', type=str, default=None, help='16-byte key hex; random if omitted')
     ap.add_argument('--no-verify', action='store_true', help='skip per-trace readback verification')

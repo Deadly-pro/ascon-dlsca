@@ -1,0 +1,18 @@
+{
+  "npz": "training/data/main2.npz",
+  "byte": 1,
+  "n": 9151,
+  "n_classes": 9,
+  "features": 5995,
+  "hidden": [
+    128,
+    256,
+    256
+  ],
+  "epochs": 40,
+  "seed": 0,
+  "best_val_acc": 0.24617625772953033,
+  "test_acc": 0.23889292776584625,
+  "chance": 0.1111111111111111,
+  "seconds": 8.83574914932251
+}
