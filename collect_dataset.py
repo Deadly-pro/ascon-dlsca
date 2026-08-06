@@ -13,7 +13,7 @@ Output h5 (training-ready):
     attrs: adc_samples, fs_hz, crypto_clk_hz, key_mode, verified, ...
 
 Usage:
-    python3 collect_dataset.py -n 1000 -s 25000 -o Dataset/ascon_dataset.h5
+    python3 collect_dataset.py -n 1000 -s 24000 -o Dataset/ascon_dataset.h5
     python3 collect_dataset.py -n 500  --key 000102030405060708090a0b0c0d0e0f
 """
 import argparse
