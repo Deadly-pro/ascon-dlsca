@@ -538,3 +538,16 @@ def batch_fpga_expected(pairs, return_mask=False):
     if return_mask:
         return result, b'\xff' * 16    # no X bits in standard core
     return result
+
+
+def kadd_labels(keys_bytes, nonces_bytes):
+    """Return HW of S[3] after ASCON init+KADD for each (key, nonce).
+    S[3] is the state word XORed with key[0:8] after the 12-round
+    init permutation — a real, key-dependent intermediate."""
+    import numpy as np
+    labels = []
+    for key, nonce in zip(keys_bytes, nonces_bytes):
+        S = [0, 0, 0, 0, 0]
+        ascon_initialize(S, 128, 16, 12, 8, 1, key, nonce)
+        labels.append(int(S[3]).bit_count())
+    return np.array(labels, dtype=np.uint8)

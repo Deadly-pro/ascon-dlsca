@@ -29,7 +29,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy import signal
 
-from ascon_ref import batch_fpga_expected
+from ascon_ref import batch_fpga_expected, ascon_initialize, kadd_labels
 
 
 def load(path):
@@ -148,12 +148,11 @@ def main():
     fig.tight_layout()
     add_panel('Overlay', fig)
 
-    # ---- 5. zoomed window (find largest-variance region) ----
-    # variance is a good proxy for where the crypto op lives
+    # ---- 5. zoomed window (first half, where crypto op lives) ----
     v = std_t ** 2
-    k_win = min(2000, samples // 2)
-    v[:k_win] = 0                      # ignore the tail after op
-    peak = int(np.argmax(v))
+    # op is in the first ~400 samples (10 us at 40 MHz) — search first half
+    half = samples // 2
+    peak = int(np.argmax(v[:half]))
     lo = max(0, peak - 2000)
     hi = min(samples, peak + 4000)
     fig, ax = plt.subplots(figsize=(14, 4))
@@ -197,7 +196,25 @@ def main():
     fig.tight_layout()
     add_panel('Alignment', fig)
 
-    # ---- 8. SNR per byte (key^nonce HW) ----
+    # ---- 8. SNR: post-init KADD state (real intermediate) ----
+    try:
+        lbl = kadd_labels([bytes(k) for k in keys], [bytes(n) for n in nonces])
+        classes = np.unique(lbl)
+        if len(classes) > 1:
+            snr = snr_grouped(traces, lbl)
+            fig, ax = plt.subplots(figsize=(14, 4))
+            ax.plot(t_us, 10 * np.log10(snr), lw=0.6)
+            ax.set(xlabel='time (us)', ylabel='SNR (dB)',
+                   title=f'SNR: HW(ASCON post-init KADD state word 3)  — {len(classes)} classes')
+            ax.grid(alpha=0.3)
+            fig.tight_layout()
+            add_panel('SNR (real intermediate)', fig)
+        else:
+            print('skipping SNR: single HW class (fixed key?)')
+    except Exception as e:
+        print(f'skipping SNR (KADD label): {e}')
+
+    # ---- 8b. per-byte HW(key^nonce) - generic placeholder ----
     nb = min(16, keys.shape[1])
     fig, axes = plt.subplots(4, 4, figsize=(18, 12), sharex=True)
     for b in range(nb):
@@ -208,9 +225,9 @@ def main():
             ax.plot(t_us, 10 * np.log10(snr), lw=0.5)
         ax.set_title(f'byte {b}')
         ax.grid(alpha=0.3)
-    fig.suptitle('Per-byte SNR: HW(key[b] ^ nonce[b])  (dB)')
+    fig.suptitle('Per-byte SNR: HW(key[b] ^ nonce[b]) — generic placeholder, not an ASCON intermediate')
     fig.tight_layout()
-    add_panel('Per-byte SNR', fig)
+    add_panel('Per-byte SNR (generic)', fig)
 
     # ---- 9. NICV (model-free) ----
     b = 0

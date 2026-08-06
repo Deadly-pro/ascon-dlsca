@@ -6,15 +6,23 @@ armed only after the inputs are latched, the op runs, and the readback is
 VERIFIED against the standard ASCON-128 reference (ascon_ref.py).
 
 Output h5 (training-ready):
-    traces (n, samples) f32     power traces (tio_trigger edge, ADC @ extclk_x4)
+    traces (n, samples) f32     power traces (tio_trigger edge, ADC @ 40 MHz)
     keys   (n, 16)       u8     per-trace key
     nonces (n, 16)       u8     per-trace nonce
     ciphertexts (n, 16)  u8     readback {tag[95:0], ct[31:0]}
-    attrs: adc_samples, fs_hz, crypto_clk_hz, key_mode, verified, ...
+    attrs: adc_samples, fs_hz, crypto_clk_hz, gain_db, key_mode,
+           verified, num_traces, source_bitstream
+
+Confirmed settings:
+    gain      = 25 dB programmable (+ ~20 dB fixed external -> ~45 dB total)
+    adc_src   = clkgen_x4 (40 MHz, free-running)
+    samples   = 24000 (>24430 causes CW-Lite buffer underrun)
+    crypto    = 10.0 MHz (PLL1, verified via pll_outfreq_get)
+    tio_clkout enabled via REG_CLKSETTINGS = 0x19
 
 Usage:
-    python3 collect_dataset.py -n 1000 -s 24000 -o Dataset/ascon_dataset.h5
-    python3 collect_dataset.py -n 500  --key 000102030405060708090a0b0c0d0e0f
+    python3 collect_dataset.py -n 1000 -o Dataset/run.h5
+    python3 collect_dataset.py -n 500 --key 000102030405060708090a0b0c0d0e0f
 """
 import argparse
 import os
@@ -43,12 +51,9 @@ def main():
     ap.add_argument('-n', '--num', type=int, default=1000, help='traces to collect')
     ap.add_argument('-s', '--samples', type=int, default=24000)
     ap.add_argument('-o', '--output', default=os.path.join(here, 'Dataset', 'ascon_dataset.h5'))
-    ap.add_argument('--key', type=str, default=None,
-                    help='fixed key in hex (16 bytes); random if omitted')
-    ap.add_argument('--no-verify', action='store_true',
-                    help='skip per-trace readback verification')
-    ap.add_argument('--max-fail', type=int, default=10,
-                    help='abort after N consecutive unverified traces')
+    ap.add_argument('--key', type=str, default=None, help='16-byte key hex; random if omitted')
+    ap.add_argument('--no-verify', action='store_true', help='skip per-trace readback verification')
+    ap.add_argument('--max-fail', type=int, default=10, help='abort after N consecutive failures')
     ap.add_argument('--gain', type=int, default=25)
     ap.add_argument('--no-program', action='store_true')
     args = ap.parse_args()
@@ -56,15 +61,6 @@ def main():
     fixed_key = None if args.key is None else bytes.fromhex(args.key)
     if fixed_key is not None and len(fixed_key) != 16:
         sys.exit("key must be 16 bytes in hex")
-
-    scope = cw.scope()
-    scope.gain.db = args.gain
-    scope.adc.samples = args.samples
-    scope.adc.offset = 0
-    scope.clock.adc_src = 'clkgen_x4'
-    scope.clock.clkgen_freq = 40e6
-    scope.clock.reset_adc()
-    scope.trigger.triggers = 'tio4'
 
     print(f"[+] Connecting CW305 target ...")
     target = cw.target(None, cw.targets.CW305, force=True,
@@ -79,15 +75,25 @@ def main():
         target.pll.pll_outfreq_set(10e6, 1)
     target.clkusbautooff = True
     target.clksleeptime = 1
+    target.fpga_write(0x00, [0x19])   # enable tio_clkout
     t = wrap(target)
 
+    scope = cw.scope()
+    scope.gain.db = args.gain
+    scope.adc.samples = args.samples
+    scope.adc.offset = 0
+    scope.clock.adc_src = 'clkgen_x4'
+    scope.clock.clkgen_freq = 40e6
+    scope.clock.reset_adc()
     scope.trigger.triggers = 'tio4'
 
     traces, keys, nonces, cts = [], [], [], []
     fails = 0
     key_mode = 'fixed' if fixed_key is not None else 'random'
     print(f"[+] collecting {args.num} traces ({key_mode} key, {args.samples} samples)")
-    print(f"[+] verify readback: {not args.no_verify}")
+    print(f"[+] gain={args.gain} dB, adc_src=clkgen_x4, verify={'ON' if not args.no_verify else 'off'}")
+    crypto_freq = target.pll.pll_outfreq_get(1)
+    print(f"[+] crypto clock = {crypto_freq/1e6:.1f} MHz (CDCE906 pllread)")
 
     plan = []
     for i in range(args.num):
@@ -113,13 +119,6 @@ def main():
             fails += 1
             continue
 
-        t0 = time.time()
-        while not t.is_done() and time.time() - t0 < 1.0:
-            time.sleep(0.001)
-        if not t.is_done():
-            print(f"    trace {i}: FPGA still busy, skipping")
-            fails += 1
-            continue
         ct = bytes(t.readOutput())
 
         if not args.no_verify:
@@ -147,8 +146,10 @@ def main():
         f.create_dataset('ciphertexts', data=np.frombuffer(b''.join(cts), np.uint8).reshape(-1, 16))
         f.attrs['adc_samples'] = args.samples
         f.attrs['fs_hz'] = 40e6
-        f.attrs['crypto_clk_hz'] = 10e6
+        f.attrs['crypto_clk_hz'] = crypto_freq
         f.attrs['gain_db'] = args.gain
+        f.attrs['gain_note'] = 'programmable + ~20 dB fixed external'
+        f.attrs['adc_src'] = 'clkgen_x4'
         f.attrs['key_mode'] = key_mode
         f.attrs['verified'] = not args.no_verify
         f.attrs['num_traces'] = tr.shape[0]
