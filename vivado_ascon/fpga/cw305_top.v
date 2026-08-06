@@ -323,7 +323,7 @@ ascon_top u_ascon_top (
 // Status signals for CW305
 assign crypt_busy     = ~ready_for_data;
 assign crypt_stateout = ascon_state; // To be read via USB
-assign tio_trigger    = start_capture;
+assign tio_trigger    = (state == PROCESS_AD) || (state == PROCESS_MSG);
 assign crypt_done = ascon_done;
 assign crypt_cipherout = ciphertext;
 
