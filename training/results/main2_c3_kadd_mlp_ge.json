@@ -1,0 +1,12 @@
+{
+  "target": "kadd",
+  "column": 3,
+  "arch": "mlp",
+  "n_attack": 1831,
+  "n_classes": 9,
+  "chance_rank": 5.0,
+  "mean_rank": 3.1916985253959584,
+  "median_rank": 3.0,
+  "top1_acc": 0.1796832332058984,
+  "model": "training/models/main2_c3_kadd_mlp.pt"
+}

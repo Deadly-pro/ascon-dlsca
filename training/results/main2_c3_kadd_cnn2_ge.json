@@ -1,0 +1,13 @@
+{
+  "target": "kadd",
+  "column": 3,
+  "arch": "cnn2",
+  "n_attack": 1831,
+  "n_classes": 9,
+  "chance_rank": 5.0,
+  "mean_rank": 3.1758601856908792,
+  "median_rank": 3.0,
+  "top1_acc": 0.1949754232659749,
+  "traces_to_perfect": 2,
+  "model": "training/models/main2_c3_kadd_cnn2.pt"
+}

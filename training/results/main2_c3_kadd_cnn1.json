@@ -1,0 +1,29 @@
+{
+  "npz": "training/data/main2.npz",
+  "target": "kadd",
+  "column": 3,
+  "arch": "cnn1",
+  "n": 9151,
+  "n_classes": 9,
+  "classes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "window": 400,
+  "hidden": [
+    128
+  ],
+  "epochs": 40,
+  "seed": 0,
+  "best_val_acc": 0.1163298711180687,
+  "chance": 0.1111111111111111,
+  "model": "/home/deadly-pro/ascon/training/models/main2_c3_kadd_cnn1.pt",
+  "seconds": 25.746013402938843
+}
