@@ -54,7 +54,11 @@ def main():
     ap.add_argument('--key', type=str, default=None, help='16-byte key hex; random if omitted')
     ap.add_argument('--no-verify', action='store_true', help='skip per-trace readback verification')
     ap.add_argument('--max-fail', type=int, default=10, help='abort after N consecutive failures')
-    ap.add_argument('--gain', type=int, default=25)
+    ap.add_argument('--gain', type=int, default=20)
+    ap.add_argument('--clip-threshold', type=float, default=0.49,
+                    help='reject traces with |trace|.max() above this (clipping)')
+    ap.add_argument('--std-floor', type=float, default=0.01,
+                    help='reject traces with std below this (dead/flat capture)')
     ap.add_argument('--no-program', action='store_true')
     args = ap.parse_args()
 
@@ -88,7 +92,9 @@ def main():
     scope.trigger.triggers = 'tio4'
 
     traces, keys, nonces, cts = [], [], [], []
-    fails = 0
+    verify_fails = 0
+    clips = 0
+    flats = 0
     key_mode = 'fixed' if fixed_key is not None else 'random'
     print(f"[+] collecting {args.num} traces ({key_mode} key, {args.samples} samples)")
     print(f"[+] gain={args.gain} dB, adc_src=clkgen_x4, verify={'ON' if not args.no_verify else 'off'}")
@@ -124,18 +130,30 @@ def main():
         if not args.no_verify:
             exp = exp_list[i]
             if ct != exp:
-                print(f"    trace {i}: VERIFY FAILED got={ct.hex()} exp={exp.hex()} - skipping")
-                fails += 1
-                if fails >= args.max_fail:
-                    sys.exit(f"aborting: {fails} unverified traces")
+                print(f"    trace {i}: VERIFY FAILED got={ct.hex()} exp={exp.hex()} — skipping")
+                verify_fails += 1
+                if verify_fails >= args.max_fail:
+                    sys.exit(f"aborting: {verify_fails} consecutive verify failures")
                 continue
 
-        traces.append(scope.get_last_trace())
+        trace = scope.get_last_trace()
+        peak = float(np.abs(trace).max())
+        if peak > args.clip_threshold:
+            clips += 1; continue
+
+        if trace.std() < args.std_floor:
+            flats += 1; continue
+
+        if trace.std() < args.std_floor:
+            print(f"    trace {i}: FLAT (std={trace.std():.4f}) — skipping")
+            fails += 1; continue
+
+        traces.append(trace)
         keys.append(key)
         nonces.append(nonce)
         cts.append(ct)
         if i % 50 == 0 or i == args.num - 1:
-            print(f"    {i+1}/{args.num} (fails: {fails})")
+            print(f"    {i+1}/{args.num} (stored: {len(traces)}, verify_err: {verify_fails}, clip: {clips}, flat: {flats})")
 
     tr = np.array(traces, dtype=np.float32)
     os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
@@ -153,9 +171,14 @@ def main():
         f.attrs['key_mode'] = key_mode
         f.attrs['verified'] = not args.no_verify
         f.attrs['num_traces'] = tr.shape[0]
+        f.attrs['clipped_rejected'] = clips
+        f.attrs['flat_rejected'] = flats
+        f.attrs['clip_threshold'] = args.clip_threshold
+        f.attrs['std_floor'] = args.std_floor
         f.attrs['source_bitstream'] = os.path.basename(args.bitstream)
 
-    print(f"[+] Saved {tr.shape[0]} verified traces -> {args.output} (fails: {fails})")
+    print(f"[+] Saved {tr.shape[0]} verified traces -> {args.output} "
+          f"(verify_err: {verify_fails}, clip: {clips}, flat: {flats})")
 
     target.dis()
     scope.dis()
