@@ -2,7 +2,4 @@ numpy
 h5py
 matplotlib
 scipy
-scikit-learn
 chipwhisperer==6.0.0
-tensorflow
-ascon

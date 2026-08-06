@@ -22,3 +22,6 @@ Dataset/
 tb_verify_exp.txt
 tb_verify.fst
 *.swp
+*.orig
+clockInfo.txt
+target_api_docs*.txt
