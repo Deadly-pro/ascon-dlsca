@@ -61,10 +61,10 @@ def main():
     scope.gain.db = args.gain
     scope.adc.samples = args.samples
     scope.adc.offset = 0
-    scope.adc.basic_mode = 'rising_edge'
-    scope.clock.adc_src = 'extclk_x4'
+    scope.clock.adc_src = 'clkgen_x4'
     scope.clock.clkgen_freq = 40e6
     scope.clock.reset_adc()
+    scope.trigger.triggers = 'tio4'
 
     print(f"[+] Connecting CW305 target ...")
     target = cw.target(None, cw.targets.CW305, force=True,
