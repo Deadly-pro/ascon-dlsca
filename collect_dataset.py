@@ -41,7 +41,7 @@ def main():
     ap.add_argument('-b', '--bitstream',
                     default=os.path.join(here, 'vivado_ascon', 'ascon_cw305_top.bit'))
     ap.add_argument('-n', '--num', type=int, default=1000, help='traces to collect')
-    ap.add_argument('-s', '--samples', type=int, default=25000)
+    ap.add_argument('-s', '--samples', type=int, default=24000)
     ap.add_argument('-o', '--output', default=os.path.join(here, 'Dataset', 'ascon_dataset.h5'))
     ap.add_argument('--key', type=str, default=None,
                     help='fixed key in hex (16 bytes); random if omitted')
