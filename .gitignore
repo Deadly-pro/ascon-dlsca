@@ -28,3 +28,4 @@ target_api_docs*.txt
 training/plots/
 training/data/
 .venv/
+training/models/

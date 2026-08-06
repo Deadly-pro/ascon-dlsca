@@ -1,0 +1,11 @@
+{
+  "target": "sbox",
+  "column": 1,
+  "arch": "cnn2",
+  "n_attack": 1831,
+  "chance": 4.0,
+  "ge_first": 2.2,
+  "ge_final": 2.5,
+  "traces_to_ge1": null,
+  "model": "training/models/main2_c1_sbox_cnn2.pt"
+}

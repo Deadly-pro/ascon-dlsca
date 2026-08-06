@@ -10,8 +10,10 @@ training/evaluation pipeline.
 |--------|---------|
 | `overview.py` | side-by-side health comparison of every `Dataset/*.h5` |
 | `eda.py` | per-dataset report: health, alignment, active region, leakage scans, spectrum |
-| `preprocess.py` | align, crop to op window, z-score, second-order centered-product features, per-byte HW labels → `training/data/*.npz` |
-| `train.py` | MLP profile on a target byte, train/val/test by trace, accuracy vs chance → `training/results/*.json` |
+| `preprocess.py` | align, crop to op window, z-score → `training/data/*.npz` with `labels_sbox` (N,64) + `labels_kadd` (N,8) |
+| `labels.py` | vectorized label generators, verified against `ascon_ref.py` (self-test in `python3 labels.py`) |
+| `train.py` | train cnn1/cnn2/mlp profile on a target byte/column, 80/20 trace split, accuracy vs chance → `training/results/*.json` |
+| `attack.py` | guessing-entropy / key-rank evaluation of a trained profile on the held-out 20 % |
 
 ## Running
 
@@ -22,7 +24,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -r training/requirements.txt
 .venv/bin/python training/overview.py
 .venv/bin/python training/eda.py Dataset/main2.h5
 .venv/bin/python training/preprocess.py Dataset/main2.h5
-.venv/bin/python training/train.py training/data/main2.npz --byte 3
+.venv/bin/python training/train.py training/data/main2.npz --target kadd --column 3 --arch mlp
+.venv/bin/python training/attack.py training/data/main2.npz \
+    --model training/models/main2_c3_kadd_mlp.pt --target kadd --column 3
 ```
 
 Plots are written to `training/plots/<dataset>/` and derived features to
@@ -58,17 +62,32 @@ The table below comes from `training/overview.py` (KADD-SNR measured in the
    (cross-correlation against the mean) before any feature extraction or CNN
    input, or the leakage peaks smear out.
 
-4. **No strong first-order leakage on the KADD intermediate.** KADD-SNR peaks
-   at ~4 dB (100-trace demo, sample ~182 / ~4.5 µs). This is expected: the core
-   is masked (d=1, 2-share), so first-order CPA/SNR on a single intermediate
-   should be weak. A meaningful attack will need either second-order (centered
-   product) features or a focus on glitches/combination leakage — not plain
-   HW-of-one-intermediate labels.
+4. **No strong first-order leakage on the round-1 S-box output.** SNR is
+   ≈ −23 dB in first order AND second order (lags 1/4/8/16). This is expected:
+   the core is masked (d=1, 2-share), so first-order leakage on a masked
+   intermediate should be weak. The KADD intermediate (S[3] after init+KADD)
+   leaks far more: first-order SNR ≈ −12.4 dB, ~12 dB stronger than the S-box.
 
 5. **Amplitude scaling differs across gains.** run1/run2 (gain 25) clip ~42 %
    of traces; main.h5 (gain −5) never clips but has the weakest signal. For
    training pick one gain regime and normalize consistently (per-trace
    z-score or global min/max).
+
+### Label provenance
+
+All labels are computed with `labels.py` and verified **byte-for-byte against
+`ascon_ref.py`** (the hardware-verified oracle, 5/5 KATs on the CW305 bitstream)
+via the self-test (`python3 training/labels.py`): `round1_sbox_hw` and
+`kadd_words_hw` both pass 100 % of checks. The bit-sliced S-box used in
+`labels.py` matches the published ASCON S-box table under a bit-reversal
+convention of both input and output — same function, different column packing.
+
+- `labels_kadd` (N,8): HW of each byte of S[3] after the 12-round init
+  permutation + key XOR. Depends on the **full** 128-bit key (not factorable
+  per byte) → used for profiled *intermediate recovery*, not per-byte key rank.
+- `labels_sbox` (N,64): HW of the round-1 S-box output per column. Each column
+  depends on only 2 key bits → factorable for key-rank, but this is the target
+  the masking suppresses.
 
 ### Recommended next steps for training
 
@@ -81,25 +100,45 @@ The table below comes from `training/overview.py` (KADD-SNR measured in the
   products after centering) or DL-SCA targeting the masked S-box output,
   evaluating with train/val/test split by key/nonce.
 
-## First training results (masked d=1 core, second-order features)
+## Training results (masked d=1 core, held-out random-key traces)
 
-`preprocess.py` aligns, crops to 0–50 µs, z-scores, and builds centered-product
-features at lags 1 and 4 samples (one crypto clock @ 10 MHz ≈ 4 samples).
-Labels are the Hamming weight (0–8) of each byte of S[3] after ASCON init + KADD
-(from `ascon_ref.py`). A 3-layer MLP (128–256–256) is trained on 70 %, validated
-on 15 %, tested on the held-out 15 %; every trace has a unique random key, so
-test accuracy above chance (11.1 %) means the model generalizes to unseen keys.
+`preprocess.py` aligns, crops to 0–50 µs, and z-scores. `train.py` trains a
+profile on 80 % of traces and validates on the held-out 20 %; every trace has a
+unique random key, so validation accuracy above chance means the model
+generalizes to unseen keys. All 8 KADD bytes leak at ~2× chance regardless of
+architecture:
 
-| npz | traces | byte | test acc | vs chance (11.1 %) |
-|-----|--------|------|----------|--------------------|
-| `main2.npz` | 9151 | 3 | 28.0 % | 2.5× |
-| `main.npz` | 8028 | 3 | 26.1 % | 2.4× |
-| `main2.npz` | 9151 | 0 | 23.6 % | 2.1× |
+| target | arch | best val | vs chance |
+|--------|------|----------|-----------|
+| KADD byte 0 | mlp (products) | 21.6 % | 1.9× (11.1 %) |
+| KADD byte 3 | mlp (products) | 20.5 % | 1.9× |
+| KADD byte 5 | mlp (products) | 21.0 % | 1.9× |
+| KADD byte 3 | cnn2 (2nd-order) | 18.2 % | 1.6× |
+| KADD byte 3 | cnn1 (1st-order) | 11.6 % | 1.0× |
+| S-box col 1 | cnn2 (2nd-order) | 24.4 % | 1.2× (20 %) |
 
-**Takeaway:** the model recovers key-dependent leakage on held-out keys — a real,
-generalizing DL-SCA signal on the masked core. All 8 S[3] bytes train to
-24–28 % (byte 3 strongest). Byte 3 in `main2.npz` is the current best target at
-28.0 % test accuracy. Next step is moving from HW-classification accuracy to
-actual key recovery (guessing entropy) — byte-level HW alone is not enough to
-recover a 128-bit key; we need a 256-class byte-value profile or a
-factorable-key attack on the first-round S-box output.
+**Takeaway:** the model recovers key-dependent leakage on held-out keys — a
+real, generalizing DL-SCA signal on the masked core, concentrated on the KADD
+intermediate. The centered-product MLP (raw + lags 1,4, 5995-dim) is the
+strongest and cheapest; cnn1 on the raw trace is at chance, as expected for a
+masked core.
+
+### Guessing entropy (`attack.py`)
+
+`attack.py` scores the trained profile on the same held-out 20 % never touched
+during training, with `train.py`'s exact split (same npz + seed):
+
+- **KADD target** — intermediate recovery. Each trace carries a different
+  random key and the target depends on the full 128-bit key, so there is no
+  global key hypothesis to rank; the honest metric is the mean rank of the true
+  intermediate HW class per trace (chance = 5 for 9 classes). Byte 3: mean rank
+  3.17 (MLP), top-1 18.6 % — the model places the true intermediate top-3 on
+  average.
+- **S-box target** — key-rank control. Per column only 2 key bits are unknown
+  (4 hypotheses); accumulated-log-prob key-bits GE stays at ~2.2–2.5 / 4
+  (chance 2.5): the naive first-order target is defeated, as the masking
+  intends.
+
+A clean key-recovery GE (as in the unmasked ~800-trace literature figures)
+requires a **fixed-key attack capture** — collect one with
+`collect_dataset.py --key <hex>` and point `attack.py --target sbox` at it.
