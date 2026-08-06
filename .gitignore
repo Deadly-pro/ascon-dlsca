@@ -25,3 +25,4 @@ tb_verify.fst
 *.orig
 clockInfo.txt
 target_api_docs*.txt
+training/plots/
