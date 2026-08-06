@@ -1,16 +1,18 @@
-# Auto-generated: build Ascon bitstream for CW305-100t
+# Build Ascon-128 (compact-yet-fast-ascon) bitstream for CW305-100t
 set PART xc7a100tftg256-2
-set TOP cw305_top_ascon
-set PROJ_DIR [file normalize [file dirname [info script]]]
-set srcs [glob -directory [file join $PROJ_DIR src] *.v]
-set ascon_srcs [glob -directory [file join $PROJ_DIR src ascon] *.v]
-set xdc [file join $PROJ_DIR constrs cw305.xdc]
+set TOP  cw305_top
+set PROJ_DIR [file normalize [file dirname [info script]]/vivado_ascon]
+set fpga_srcs   [glob -directory [file join $PROJ_DIR fpga] *.v]
+set rtl_srcs    [glob -directory [file join $PROJ_DIR rtl]  *.sv]
+set xdc         [file join $PROJ_DIR fpga cw305.xdc]
+set defs_dir    [file join $PROJ_DIR fpga]
+
 create_project -in_memory -part $PART
-set_property verilog_define {ASCON_CORE} [current_fileset]
-read_verilog $srcs
-read_verilog $ascon_srcs
+read_verilog -sv $fpga_srcs
+read_verilog -sv $rtl_srcs
 read_xdc $xdc
-synth_design -top $TOP -part $PART -verilog_define ASCON_CORE
+set_property include_dirs $defs_dir [current_fileset]
+synth_design -top $TOP -part $PART
 opt_design
 place_design
 route_design
