@@ -1,6 +1,6 @@
-# ASCON-128 Side-Channel Analysis on NewAE CW305 + ChipWhisperer-Lite
+# ASCON-128 Deep Learning Side-Channel Analysis (DL-SCA) on NewAE CW305 + ChipWhisperer-Lite
 
-Power side-channel analysis (SCA) of a **masked ASCON-128** hardware
+Deep learning side-channel analysis (DL-SCA) of a **masked ASCON-128** hardware
 implementation — the NIST SP 800-232 lightweight authenticated cipher — running
 on a **NewAE Technology CW305** (Artix-7 XC7A100T FPGA target) and captured with
 a **ChipWhisperer-Lite** (CW-Lite) 40 MS/s scope front-end.
@@ -99,7 +99,24 @@ python3 view_dataset.py Dataset/run.h5 --outdir Dataset/analysis
 # writes Dataset/analysis/report.html
 ```
 
-### 5. Rebuild the bitstream (Vivado)
+### 5. Train (deep-learning side-channel analysis)
+
+```bash
+# 0) create the CPU-torch venv once
+python3.12 -m venv .venv && .venv/bin/pip install -r training/requirements.txt
+
+# 1) preprocess a capture into aligned/z-scored features + per-byte HW labels
+.venv/bin/python training/preprocess.py Dataset/main2.h5
+
+# 2) train an MLP profile on a target S[3] byte
+.venv/bin/python training/train.py training/data/main2.npz --byte 3
+```
+
+See `training/README.md` for the pipeline and results: the second-order
+features recover key-dependent leakage on held-out keys (28.0 % vs 11.1 %
+chance on byte 3 of the masked d=1 core).
+
+### 6. Rebuild the bitstream (Vivado)
 
 ```bash
 bash build_bitstream.sh        # ~25-45 min, log in vivado_ascon/build_logs/
