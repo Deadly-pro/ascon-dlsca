@@ -48,7 +48,13 @@ def align(traces, k=200):
     out = np.empty_like(traces)
     for i, s in enumerate(shifts):
         out[i] = np.roll(traces[i], -int(s))
-    return out, shifts, lo, hi
+    return out, ref, shifts, lo, hi
+
+
+def align_trace(trace, ref):
+    """Align a single live trace against a stored reference (adaptive loop)."""
+    c = signal.correlate(trace, ref, mode='same', method='fft')
+    return np.roll(trace, -int(np.argmax(c) - len(trace) // 2))
 
 
 def zscore(traces):
@@ -78,11 +84,12 @@ def main():
     traces = traces[:, :win]
     print(f'{name}: {traces.shape[0]} traces x {traces.shape[1]} window')
 
-    traces, shifts, lo, hi = align(traces, args.align_k)
+    traces, ref, shifts, lo, hi = align(traces, args.align_k)
     print(f'  alignment shifts {lo}..{hi} samples '
           f'({(hi - lo) / 40e6 * 1e6:.2f} us spread)')
 
     traces = zscore(traces).astype(np.float32)
+    ref = ref.astype(np.float32)
     print(f'  aligned + z-scored traces {traces.shape}')
 
     labels = lab.round1_sbox_hw(keys, nonces)
@@ -97,7 +104,8 @@ def main():
 
     npz = os.path.join(out_dir, f'{name}.npz')
     np.savez_compressed(npz, traces=traces, labels_sbox=labels,
-                        labels_kadd=kadd, keys=keys, nonces=nonces)
+                        labels_kadd=kadd, keys=keys, nonces=nonces,
+                        ref=ref)
     meta = {'dataset': args.h5, 'n_traces': int(len(traces)),
             'window': int(win), 'shifts_lo': int(lo), 'shifts_hi': int(hi),
             'npz': npz}
