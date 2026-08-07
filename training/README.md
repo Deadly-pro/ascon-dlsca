@@ -10,10 +10,12 @@ training/evaluation pipeline.
 |--------|---------|
 | `overview.py` | side-by-side health comparison of every `Dataset/*.h5` |
 | `eda.py` | per-dataset report: health, alignment, active region, leakage scans, spectrum |
-| `preprocess.py` | align, crop to op window, z-score → `training/data/*.npz` with `labels_sbox` (N,64) + `labels_kadd` (N,8) |
+| `preprocess.py` | align, crop to op window, z-score → `training/data/*.npz` with `labels_sbox` (N,64) + `labels_kadd` (N,8) + `ref` (alignment reference for live traces) |
 | `labels.py` | vectorized label generators, verified against `ascon_ref.py` (self-test in `python3 labels.py`) |
 | `train.py` | train cnn1/cnn2/mlp profile on a target byte/column, 80/20 trace split, accuracy vs chance → `training/results/*.json` |
 | `attack.py` | guessing-entropy / key-rank evaluation of a trained profile on the held-out 20 % |
+| `adaptive.py` | closed-loop adaptive chosen-plaintext (ACPPA) engine + `--validate` offline premise check |
+| `../live_query.py` | board-side single-trace fixed-key capture primitive used by `adaptive.py --attack` |
 
 ## Running
 
@@ -27,6 +29,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -r training/requirements.txt
 .venv/bin/python training/train.py training/data/main2.npz --target kadd --column 3 --arch mlp
 .venv/bin/python training/attack.py training/data/main2.npz \
     --model training/models/main2_c3_kadd_mlp.pt --target kadd --column 3
+.venv/bin/python training/adaptive.py --validate --npz training/data/main2.npz \
+    --model training/models/main2_c1_sbox_cnn2.pt --column 1
 ```
 
 Plots are written to `training/plots/<dataset>/` and derived features to
@@ -142,3 +146,38 @@ during training, with `train.py`'s exact split (same npz + seed):
 A clean key-recovery GE (as in the unmasked ~800-trace literature figures)
 requires a **fixed-key attack capture** — collect one with
 `collect_dataset.py --key <hex>` and point `attack.py --target sbox` at it.
+
+### Adaptive chosen-plaintext (`adaptive.py`) — validated, result is negative
+
+The closed-loop ACPPA engine exists (`adaptive.py --attack`, needs the board via
+`live_query.py`), but the offline `--validate` premise check has already answered
+the key question: **there is no exploitable per-trace signal in the round-1
+S-box on this masked core**, so adaptive nonce selection has nothing to amplify.
+
+Measured on the held-out 20 % (1831 traces) with the trained sbox profile:
+
+| column | HW-class top-1 | vs chance | key-bits top-1 (ties count against) | per-trace drift E[Δlogp] |
+|--------|----------------|-----------|--------------------------------------|--------------------------|
+| 1 | 24.5 % | 20 % (4.8σ, real but tiny) | 9.3 % vs 25 % (**below chance**) | **−0.053 (anti-correlated)** |
+| 0 | 19.1 % | 20 % (at chance) | 12.2 % vs 25 % (below chance) | −0.0009 |
+
+Root causes, both structural:
+1. **Class collisions**: 62 % of random nonces map the true key hypothesis to
+   the same HW class as another hypothesis → a single trace cannot separate
+   them (identical score). The separating-nonce heuristic *does* fix this
+   (col 0 reaches sep=4, col 1 is capped at sep=3 by the S-box truth table),
+   yet sep=4 traces still rank the true key at chance (23.1 % vs 25 %) — so
+   collisions were never the binding constraint.
+2. **No drift**: per-trace `E[logp_true − logp_other]` is ≤ 0, so accumulating
+   evidence over more traces drives the posterior *away* from the true key, not
+   toward it. The masking (d=1, 2-share) genuinely suppresses the first-order
+   S-box intermediate; the residual HW-class signal is real but far too weak to
+   convert into key-bits rank.
+
+**Conclusion for the writeup:** the masked core defeats the standard profiled
+S-box key-recovery attack (offline GE at chance, adaptive adds nothing), which
+is the expected security property. The KADD intermediate is the only real leak
+(~2× chance, all 8 bytes) but depends on the full 128-bit key, so it cannot be
+factorized into a per-byte key rank. `adaptive.py` remains wired for a board
+session, but its offline verdict should be treated as the result, not a setup
+step to be re-run.

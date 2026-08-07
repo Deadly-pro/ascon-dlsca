@@ -1,0 +1,25 @@
+{
+  "npz": "training/data/main2.npz",
+  "target": "sbox",
+  "column": 0,
+  "arch": "cnn2",
+  "n": 9151,
+  "n_classes": 5,
+  "classes": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "window": 2000,
+  "hidden": [
+    128
+  ],
+  "epochs": 30,
+  "seed": 0,
+  "best_val_acc": 0.22829055786132812,
+  "chance": 0.2,
+  "model": "/home/deadly-pro/ascon/training/models/main2_c0_sbox_cnn2.pt",
+  "seconds": 145.98429656028748
+}

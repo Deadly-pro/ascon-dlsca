@@ -1,0 +1,23 @@
+{
+  "column": 0,
+  "arch": "cnn2",
+  "n_attack": 1831,
+  "support": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "mean_rank": 2.6892408519934463,
+  "chance_rank": 2.5,
+  "top1": 0.3697433096668487,
+  "top1_conservative": 0.1223375204806117,
+  "n_queries_rank1": 677,
+  "separation_dist": {
+    "1": 0,
+    "2": 463,
+    "3": 434,
+    "4": 934
+  }
+}
