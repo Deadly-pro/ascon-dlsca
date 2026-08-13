@@ -29,7 +29,8 @@ from cw305_ascon_shim import wrap
 
 
 class LiveQuery:
-    def __init__(self, bitstream, key, samples=2000, gain=20, program=True):
+    def __init__(self, bitstream, key, samples=2000, gain=-2, offset=700,
+                 std_floor=0.01, program=True):
         assert len(key) == 16
         self.target = cw.target(None, cw.targets.CW305, force=True,
                                 bsfile=None if not program else bitstream,
@@ -50,24 +51,38 @@ class LiveQuery:
         self.scope = cw.scope()
         self.scope.gain.db = gain
         self.scope.adc.samples = samples
-        self.scope.adc.offset = 0
+        self.scope.adc.offset = offset
         self.scope.clock.adc_src = 'clkgen_x4'
         self.scope.clock.clkgen_freq = 40e6
         self.scope.clock.reset_adc()
         self.scope.trigger.triggers = 'tio4'
+        self.std_floor = std_floor
 
-    def query(self, nonce):
+    def query(self, nonce, _strikes=0):
         """One adaptive query: (nonce 16 bytes) -> (trace, ciphertext+tag).
 
-        Returns (None, None) if the capture timed out (caller retries).
+        Returns (None, None) if the capture timed out or came back flat
+        (std < std_floor — the capture() return flag is unreliable on this
+        harness, so judge by content); caller retries the same nonce.
+
+        Short captures (ADC clock drift: trace.size != samples) are treated as
+        a clock state fault: re-run reset_adc() up to 3 times to re-sync the
+        ADC PLL, then retry. Repeated failure returns None so the caller can
+        fall back to a full scope re-init.
         """
         self.t.loadInput(nonce)
         self.scope.arm()
         self.t.go()
-        if self.scope.capture():
+        self.scope.capture()
+        trace = self.scope.get_last_trace()
+        if trace is None or trace.size != self.scope.adc.samples:
+            if _strikes < 3:
+                self.scope.clock.reset_adc()
+                return self.query(nonce, _strikes + 1)
+            return None, None
+        if trace.std() < self.std_floor:
             return None, None
         ct = bytes(self.t.readOutput())
-        trace = self.scope.get_last_trace()
         return trace, ct
 
     def verify_key(self, candidate_key, nonce=None):

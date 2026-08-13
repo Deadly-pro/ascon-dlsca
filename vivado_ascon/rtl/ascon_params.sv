@@ -2,7 +2,11 @@
 package ascon_params;
 
     // === Main parameters ===
-    parameter int d          = 1;  // 0=unmasked(NEEDS CODE FIX), 1=2-share, 2=3-share
+    `ifdef ASCON_UNMASKED
+        parameter int d = 0;
+    `else
+        parameter int d = 1;
+    `endif
     parameter int PAR        = 22;
     parameter int COL_SIZE   = 5;
     parameter int WORD_SIZE  = 64;
@@ -27,8 +31,11 @@ package ascon_params;
     /* verilator lint_off UNUSED */
     parameter int PADDED_WIDTH = ((WORD_SIZE + SHIFT_WIDTH - 1) / SHIFT_WIDTH) * SHIFT_WIDTH;
     parameter int RAND_WIDTH = d*COL_SIZE*PAR + (d+1)*d/2;
-    /* verilator lint_on UNUSED */
-    parameter int DATA_WIDTH       = RAND_WIDTH;
+    parameter int RAND_WIDTH_EFF  = (RAND_WIDTH > 0) ? RAND_WIDTH : 1;
+    parameter int MASKS_WIDTH     = (d*COL_SIZE*PAR > 0) ? d*COL_SIZE*PAR : 1;
+    parameter int SBOX_RAND_WIDTH = ((d+1)*d/2 > 0) ? ((d+1)*d/2) : 1;
+    /* verilator lint_off UNUSED */
+    parameter int DATA_WIDTH       = RAND_WIDTH_EFF;
     parameter bit REVERSE          = 0;
 
     parameter int LFSR_WIDTH        = 31;

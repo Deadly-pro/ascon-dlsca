@@ -181,3 +181,137 @@ is the expected security property. The KADD intermediate is the only real leak
 factorized into a per-byte key rank. `adaptive.py` remains wired for a board
 session, but its offline verdict should be treated as the result, not a setup
 step to be re-run.
+
+### Unmasked core (d=0 bitstream) — first-order leakage returns
+
+With the unmasked `ascon_cw305_top.bit` (sanity check 5/5 on hardware), fresh
+captures `Dataset/main_unmasked.h5` + `main_unmasked_b2.h5` (merged, 6243
+traces, gain −2 dB, adc offset 700, samples 2000) show the masking was doing
+its job:
+
+| target | masked (main2) | unmasked (merged) |
+|--------|----------------|-------------------|
+| S-box val top-1 (chance 11.1 %) | ~11 % (at chance) | **28–35 % (2.5–3×)** |
+| KADD byte 3 val top-1 | 1.9× | 2.3× |
+| KADD-SNR | 1.6 dB | **2.5 dB** |
+| S-box SNR peak | −23 dB | −19 dB (sample 1108) |
+
+The unmasked S-box leaks (real, generalizing, several sigma above chance) but
+still too weakly for **single-trace** ACPPA discrimination: the live
+`adaptive.py --attack` converges in 6–16 queries with posterior 1.000 yet on
+the **wrong** hypothesis — the CNN overfits (95 % train / 30 % val on 3.7k
+traces) and its majority-class bias locks the loop onto hyp 3. Root causes:
+weak S-box SNR (−19 dB) + insufficient trace count for a generalizing profile.
+
+### Virtual-board study (`sim_board.py`, `training/sim_sweep.py`) — no hardware
+
+To turn "the loop converges only above some SNR" into a measured result, the
+noise + leakage model is fitted from the real unmasked capture
+(`sim_board.py --self-test`; amp=1 reproduces the measured S-box SNR within
+2 dB, ADC rail, DC drift, jitter and lag-5 noise color included) and exposed
+through the same `query(nonce)` interface as `live_query.py`, so the identical
+loop code runs against it:
+
+```bash
+# fit + self-check (amp=1 must match the real capture's SNR)
+.venv/bin/python sim_board.py Dataset/main_unmasked_merged.h5 --column 0
+
+# SNR threshold experiment: profile trained on sim data, attacked on the
+# virtual board at each amp (1 = real SNR; higher = stronger leakage)
+.venv/bin/python training/sim_sweep.py --amps 1 2 4 8 16 --ntrain 3000
+
+# or, a single closed loop against the virtual board
+.venv/bin/python training/adaptive.py --attack --sim \
+    --npz training/data/sim_a8.npz \
+    --model training/models/sim_a8_c0_sbox_cnn1.pt --column 0 \
+    --key 000102030405060708090a0b0c0d0e0f --sim-amp 8.0
+```
+
+Verified so far: amp=1 false-converges exactly like the real board (hyp 3,
+wrong) — cross-validating the sim against hardware; amp=8 with a sim-trained
+profile converges correctly (hyp 0, right key bits) in ~10 queries.
+
+**SNR threshold (seed-averaged, `training/results/sim_sweep.json`):**
+
+| amp (leakage vs real) | profile HW-class val | attack correct (5 seeds) |
+|-----------------------|----------------------|--------------------------|
+| 1× (real, −19 dB) | ~79 % | 0/5 — always locks onto hyp 3 |
+| 4.5× (+13 dB) | ~74 % | 0/5 |
+| 6× (+16 dB) | 50 % | 3/5 (transition) |
+| 8× (+18 dB) | ~93 % | **5/5** |
+| 16× (+24 dB) | ~98 % | 5/5, converges in 6 q |
+
+**Paper result:** reliable profiled ACPPA key recovery on the round-1 S-box
+requires the leakage ~8× stronger (+18 dB) than this core emits. The unmasked
+core's −19 dB S-box SNR sits ~18 dB below the threshold, so even unmasked the
+adaptive loop converges to the *wrong* key bits with posterior 1.0 — the
+profile's class prior dominates when the per-trace signal is that weak.
+Masking removes the first-order signal entirely (chance), which is the expected
+security property.
+
+### Full-key KADD ACPPA (`training/kadd_acppa.py`) — measured result
+
+Built the full-key attack the user's loop design requires: 8 per-byte KADD
+profiles (mlp, 21.6–24.1 % val vs 11.1 % chance — KADD leaks, ~2× chance per
+byte), a beam-search ACPPA loop that scores candidate full keys by their
+predicted KADD HW vector per trace, and ciphertext-verified termination.
+
+**Per-trace evidence (sim gate, real SNR, amp=1):** the true key scores
++3.1 nats/trace above random keys and is top-1 among 8 candidates 62 % of the
+time (chance 12.5 %) — the KADD signal is genuinely discriminative.
+
+**But the beam search cannot find the key (300 queries, 0/16 bytes):**
+1. **Not factorable.** KADD byte 0 depends on all 16 key bytes (verified) —
+   no per-byte divide-and-conquer.
+2. **No gradient.** A 1-bit flip of the true key scores like a random key
+   (−716 vs −773, overlapping) — 12 rounds of diffusion scramble the HW
+   vector completely, so there is no local structure to hill-climb.
+3. **2^128 search.** A random 512-key beam has probability ~2^-119 of
+   containing the true key; mutation can't bridge the gap without a gradient.
+
+**Verdict:** on this capture SNR, full 128-bit d=0 recovery via ACPPA is not
+achievable — the only strong target (KADD) is not searchable, and the only
+searchable target (round-1 S-box, 2 bits/column) is 18 dB too weak (proven on
+board + sim). The blocker is **analog SNR, not training or algorithm**.
+Path forward: the hybrid enumeration design (rank S-box-column candidates by
+KADD evidence) or a real probe on the FPGA core supply for the missing ~18 dB.
+
+### Live on-board training (`live_finetune.py`) — Scheme A
+
+Instead of (or in addition to) the virtual board, the profile can be
+**fine-tuned live on the board**: capture traces at a KNOWN key with random
+nonces, label them exactly via the oracle (key is known in the lab, so labels
+are exact, not hypothesized), and fine-tune the pretrained profile on
+(live_trace, exact_label) pairs. This adapts the profile to the device's true
+noise/leakage shape and to the board's live trace distribution.
+
+```bash
+# 1. fine-tune on the board at a known key (board required)
+.venv/bin/python training/live_finetune.py \
+    --model training/models/main_unmasked_merged_c0_sbox_cnn1.pt \
+    --npz training/data/main_unmasked_merged.npz \
+    --key 000102030405060708090a0b0c0d0e0f --column 0 \
+    --ntrain 300 --epochs 20 --lr 1e-4 \
+    --out training/models/main_unmasked_c0_liveft.pt
+
+# 2. attack a FRESH key with the fine-tuned profile (board required)
+.venv/bin/python training/adaptive.py --attack \
+    --npz training/data/main_unmasked_merged.npz \
+    --model training/models/main_unmasked_c0_liveft.pt \
+    --column 0 --key <NEW-16-BYTE-HEX> --max-queries 500
+```
+
+Design notes (verified on the sim board):
+- **Random nonces for training, separating nonces for attack.** Random nonces
+  spread the true HW class across traces (labels are diverse, the model can
+  learn all classes). Separating nonces collapse every training label onto a
+  single class for a fixed key — useless for training, but exactly what
+  amplifies the posterior during the attack.
+- Preprocessing and features are identical to the attack path
+  (`Profile.preprocess` + `build_input`), and the checkpoint format matches
+  `train.py`, so `adaptive.py` / `attack.py` load the fine-tuned model
+  unchanged.
+- End-to-end verified on the sim board: fine-tune at K1 → attack fresh K2 →
+  converges to the correct key bits.
+- `--sim` flag exercises the identical loop against `SimBoard` (no board
+  needed) for validation.

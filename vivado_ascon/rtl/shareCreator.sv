@@ -33,11 +33,12 @@
 import ascon_params::PAR;
 import ascon_params::d;
 import ascon_params::COL_SIZE;
+import ascon_params::MASKS_WIDTH;
 
 module shareCreator 
 (
     input  logic [COL_SIZE*PAR-1:0] data_in,
-    input  logic [d*COL_SIZE*PAR-1:0] random_masks,  // d maschere
+    input  logic [MASKS_WIDTH-1:0] random_masks,  // d maschere
     output logic [(d+1)*COL_SIZE*PAR-1:0] shares_out // (d+1) shares
 );
     //Il blocco da in uscita {shares A[4:0], shares B[9:5], shares C}

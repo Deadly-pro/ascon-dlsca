@@ -171,26 +171,32 @@ def main():
     kbit1 = ((keys[:, 8 + args.column // 8] >> (args.column % 8)) & 1) * 1
     true = np.array([np.flatnonzero((hyps[:, 0] == a) & (hyps[:, 1] == b))[0]
                      for a, b in zip(kbit0, kbit1)])
+    # Each trace carries a different random key, so there is no global
+    # hypothesis to accumulate log-prob over. Score the PER-TRACE rank of the
+    # true 2-bit hypothesis, exactly as the kadd path does.
     h_logp = np.empty_like(pred, dtype=np.float64)
     for h in range(len(hyps)):
-        ymap = {c: i for i, c in enumerate(classes)}
-        hc = np.array([ymap[v] for v in pred[:, h]])
-        h_logp[:, h] = logp[np.arange(len(hc)), hc]
+        h_logp[:, h] = logp[np.arange(len(pred)), pred[:, h]]
+    ranks = (h_logp > h_logp[np.arange(len(true)), true][:, None]).sum(axis=1) + 1
+    top1 = float((ranks == 1).mean())
+    mean_rank = float(ranks.mean())
     ge = ge_curve(h_logp, true, args.orderings, seed)
     rec = first_recovery(ge)
     print(f'S-box col {args.column} key-bits ({arch}, seed {seed}): '
-          f'{len(attack_idx)} attack traces, key-bits GE '
-          f'{ge[0]:.2f} -> {ge[-1]:.2f} (chance {len(hyps)})')
-    print(f'  GE=1 reached after {rec if rec else "never"} traces — '
-          f'expected: round-1 S-box does not leak on this masked capture')
+          f'{len(attack_idx)} attack traces, per-trace key-bits rank '
+          f'mean {mean_rank:.2f} / chance {(len(hyps)+1)/2:.2f} '
+          f'(median {np.median(ranks):.0f}), top-1 {top1*100:.1f} %')
+    print(f'  GE=1 reached after {rec if rec else "never"} traces')
     out = os.path.join(out_dir,
                        f'{name}_c{args.column}_sbox_{arch}_ge.json')
     with open(out, 'w') as f:
         json.dump({'target': 'sbox', 'column': args.column, 'arch': arch,
                    'n_attack': int(len(attack_idx)),
+                   'chance_rank': float((len(hyps) + 1) / 2),
                    'chance': float(len(hyps)),
                    'ge_first': float(ge[0]), 'ge_final': float(ge[-1]),
-                   'traces_to_ge1': rec, 'model': args.model}, f, indent=2)
+                   'traces_to_ge1': rec, 'mean_rank': mean_rank,
+                   'top1_acc': top1, 'model': args.model}, f, indent=2)
     print(f'  wrote {out}')
 
 

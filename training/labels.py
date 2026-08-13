@@ -129,6 +129,7 @@ def round1_sbox_hw(keys, nonces):
 
 def _sbox_col(v):
     """5-bit ASCON S-box on a single column value (verified == ascon_ref)."""
+    v = int(v)  # numpy scalar uint64 >> int can raise under some builds
     b0 = (v >> 0) & 1
     b1 = (v >> 1) & 1
     b2 = (v >> 2) & 1
@@ -169,7 +170,7 @@ def hypothesis_labels(column, nonces, key_bits):
     iv_bits = (S[:, 0] >> column) & 1
     n1_bits = (S[:, 3] >> column) & 1
     n2_bits = (S[:, 4] >> column) & 1
-    rc_bit = (np.uint64(0xF0) >> column) & 1 if column < 8 else 0
+    rc_bit = (0xF0 >> column) & 1 if column < 8 else 0
 
     labels = np.empty((len(nonces), len(key_bits)), dtype=np.uint8)
     for h, (kb0, kb1) in enumerate(key_bits):

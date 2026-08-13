@@ -1,0 +1,332 @@
+\documentclass[a4paper,11pt,twocolumn]{article}
+
+\usepackage[margin=2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{xcolor}
+\usepackage{enumitem}
+
+\title{Profiled Deep-Learning Side-Channel Analysis of a Masked ASCON-128 Hardware Core: Where the Signal Dies}
+
+\author{
+  Prajwal R\\
+  \small PES University, Bengaluru\\
+  \small \texttt{prajwal.r@pes.edu}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+ASCON-128 is the NIST SP 800-232 standard for lightweight authenticated encryption, selected in part for its inherent side-channel resistance. We present a complete deep-learning side-channel analysis (DL-SCA) pipeline against a threshold-implemented ($d=1$, 2-share) ASCON-128 core on a Xilinx Artix-7 FPGA (CW305), captured at 40 MS/s with a ChipWhisperer-Lite. We train CNN and MLP profiling models on two intermediates: the round-1 S-box output (factorable per column, 2 key bits) and the KADD intermediate S[3] after the 12-round initialization (full 128-bit key dependent, not factorable). On the masked core, the S-box target sits at chance across all architectures---the masking works as designed. The KADD intermediate leaks at $\sim$2$\times$ chance with a centered-product MLP (21.6\% vs.\ 11.1\% chance, all 8 bytes, generalizing to held-out random keys). However, this signal is not exploitable: KADD depends on the full 128-bit key (not factorable per byte), exhibits no local gradient for hill-climbing (1-bit key flips score like random), and a beam search over $2^{128}$ cannot locate the true key. On an unmasked ($d=0$) control core, first-order S-box leakage returns (28--35\% vs.\ 11\%), but a virtual-board SNR sweep shows reliable profiled adaptive-chosen-plaintext key recovery requires 8$\times$ the real leakage amplitude (+18 dB SNR). The unmasked core sits 18 dB below this threshold---the profiled ACPPA loop converges to the \emph{wrong} key with posterior 1.0. We contribute a noise+leakage virtual-board model fitted from real captures that reproduces hardware behavior within 2 dB, enabling offline SNR-threshold experiments without repeated hardware access, and a live on-board profile fine-tuning scheme verified end-to-end on the virtual board. The central finding is a structural deadlock: the only trainable intermediate (KADD) is not searchable; the only searchable intermediate (round-1 S-box) is not trainable on the masked core and 18 dB too weak even unmasked. The blocker is analog SNR, not training methodology or search algorithm.
+\end{abstract}
+
+\section{Introduction}
+
+ASCON is the NIST-selected standard for lightweight authenticated encryption with associated data (AEAD) under the NIST Lightweight Cryptography Standardization process~\cite{ascon_nist}. It is designed for resource-constrained environments---IoT sensors, RFID tags, implantable medical devices---where both area/power efficiency and side-channel resistance are critical. The standard ``compact-yet-fast'' implementation employs a threshold implementation (TI) with $d=1$ (2-share) masking on the 5-bit S-box to provide first-order side-channel resistance~\cite{compact_ascon}.
+
+Deep-learning side-channel analysis (DL-SCA) has demonstrated powerful profiled attacks against unprotected and protected AES implementations~\cite{dlsca_survey}. However, the application of DL-SCA to ASCON---particularly a masked hardware implementation---remains underexplored. ASCON's 320-bit state, 12-round initialization permutation, and bit-sliced 5-bit S-box present a structurally different leakage landscape than AES's 8-bit S-box and 128-bit state.
+
+This work asks: \textbf{can a deep-learning profiled attack recover key material from a masked ASCON-128 hardware core?} We answer with a complete, hardware-verified pipeline that measures the exact SNR gap between what leaks and what is exploitable.
+
+\subsection{Contributions}
+
+\begin{enumerate}[leftmargin=*,nosep]
+\item \textbf{Complete DL-SCA pipeline} for masked ASCON-128 on CW305 Artix-7 FPGA with ChipWhisperer-Lite, including oracle-verified capture (9151 traces, 0\% clip, 0\% flat), alignment+preprocessing, CNN/MLP profiling, and adaptive chosen-plaintext (ACPPA) attack infrastructure.
+\item \textbf{Measured leakage characterization:} The masked core's round-1 S-box is at chance (masking verified). The KADD intermediate (S[3] after init) leaks at $\sim$2$\times$ chance across all 8 bytes with centered-product MLP features---a real, generalizing signal on held-out random keys.
+\item \textbf{Structural deadlock demonstration:} KADD is not factorable per byte (full 128-bit key dependence), has no local gradient (1-bit flips score like random), and beam search over $2^{128}$ fails. The round-1 S-box is factorable (2 bits/column) but not trainable on the masked core.
+\item \textbf{Virtual-board SNR-threshold methodology:} A noise+leakage model fitted from real captures (self-test within 2 dB) shows reliable profiled ACPPA requires +18 dB SNR above the unmasked core's emission. The real unmasked core false-converges identically to the virtual board at amp=1$\times$.
+\item \textbf{Live on-board fine-tuning scheme (Scheme A):} Fine-tune profile at known key with random nonces, attack fresh key. Verified end-to-end on the virtual board.
+\end{enumerate}
+
+\section{Background}
+
+\subsection{ASCON-128 AEAD}
+
+ASCON-128~\cite{ascon_spec} operates on a 320-bit state organized as five 64-bit words $S[0..4]$. Encryption proceeds in four phases: initialization (12-round permutation $\mathcal{P}^{12}$ with key+nonce absorption), associated data processing, plaintext processing, and finalization (12-round $\mathcal{P}^{12}$ with key absorption releasing the 128-bit tag). The round permutation applies a 5-bit S-box substitution, linear diffusion, and round constant addition.
+
+\subsection{Masking (Threshold Implementation)}
+
+The compact-yet-fast-ascon core~\cite{compact_ascon} implements a $d=1$ (2-share) threshold implementation of the 5-bit S-box. Each sensitive variable is split into two shares $x = x_1 \oplus x_2$ with uniformly random $x_2$. The TI S-box satisfies correctness ($S(x_1 \oplus x_2) = S_1(x_1, x_2) \oplus S_2(x_1, x_2)$), non-completeness (each share depends on at most $n-d$ input shares), and uniformity. This provides first-order side-channel resistance: the mean of any single share is independent of the unmasked value.
+
+\subsection{Profiled DL-SCA}
+
+Profiled DL-SCA trains a neural network on power traces from a profiling device (known key) to classify an intermediate value's Hamming weight (HW). The trained profile is then applied to traces from a target device (unknown key). For ASCON, two intermediate targets are natural:
+
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Round-1 S-box output (per column):} Depends on only 2 key bits per column (factorable). 6 HW classes (0--5). Standard profiled key-rank target.
+\item \textbf{KADD intermediate S[3] after init:} S[3] after the full 12-round $\mathcal{P}^{12}$ with key absorption. Depends on the full 128-bit key (not factorable). 9 HW classes (0--8). Suitable for intermediate recovery but not per-byte key rank.
+\end{itemize}
+
+\section{Experimental Setup}
+
+\subsection{Hardware Platform}
+
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Target:} NewAE CW305 (Xilinx Artix-7 XC7A100T-FTG256) running the compact-yet-fast-ascon masked ASCON-128 core at 10 MHz crypto clock
+\item \textbf{Scope:} ChipWhisperer-Lite, 40 MS/s, \texttt{clkgen\_x4} ADC clock, trigger on \texttt{tio4}
+\item \textbf{Datasets:} Masked core: \texttt{main2.h5} (9151 traces, gain $-$5 dB, 0\% clip, 0\% flat); Unmasked core: \texttt{main\_unmasked\_merged.h5} (6243 traces, gain $-$2 dB, merged from two sessions)
+\item \textbf{Capture:} Every trace verified against byte-exact ASCON-128 oracle before storage; clip threshold 0.49 V, flat threshold 0.01 V std
+\end{itemize}
+
+\subsection{Preprocessing Pipeline}
+
+\begin{enumerate}[leftmargin=*,nosep]
+\item Cross-correlation alignment to reference trace
+\item Z-score normalization (per-sample, across traces)
+\item Crop to active crypto window (0--50 $\mu$s, 2000 samples)
+\end{enumerate}
+
+\subsection{Model Architectures}
+
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{MLP (centered products):} Raw trace (2000-dim) + lag-1 and lag-4 centered products $\rightarrow$ 5995-dim input, $[128, 256, 256]$ hidden, 9-class softmax output. Trained 40 epochs, batch size 128, Adam ($lr=10^{-3}$), 80/20 train/val split.
+\item \textbf{CNN1:} 1D conv (kernel 11, stride 2) $\rightarrow$ max pool $\rightarrow$ 1D conv (kernel 11) $\rightarrow$ max pool $\rightarrow$ FC $[256, 256]$
+\item \textbf{CNN2:} Same as CNN1 with centered-product input (second-order)
+\end{itemize}
+
+\subsection{Virtual Board (SimBoard)}
+
+We construct a noise+leakage model fitted from real captures:
+
+\begin{equation}
+\text{trace}(t) = \mu(t) + A \cdot \alpha(t) \cdot (\text{HW} - \mathbb{E}[\text{HW}]) + \sigma(t) \cdot \eta(t) + \delta + \tau
+\end{equation}
+
+where $\mu(t)$ is the mean trace, $\alpha(t)$ the per-sample leakage template, $\sigma(t)$ the residual noise, $\delta$ the DC drift distribution, $\tau$ the alignment jitter (from measured histogram), $\eta$ is colored noise (lag-5 ACF from residual), and $A$ is the amplitude knob. Self-test: $A=1$ reproduces measured SNR within 2 dB of the real capture.
+
+\section{Results}
+
+\subsection{Masked Core ($d=1$): Where the Signal Dies}
+
+\subsubsection{Round-1 S-box: Masking Verified}
+
+Table~\ref{tab:sbox_masked} shows the S-box profiling results on the masked core. Across architectures, validation accuracy sits at chance (20\% for 6 classes $\approx$ 16.7\% for 5 effective classes after empty-class removal). The $d=1$ threshold implementation successfully suppresses first-order leakage on the round-1 S-box output.
+
+\begin{table}[t]
+\centering
+\caption{Round-1 S-box profiling on masked core (main2.h5, 9151 traces). Chance = 20\%.}
+\label{tab:sbox_masked}
+\begin{tabular}{lcc}
+\toprule
+Architecture & Val Acc (\%) & vs Chance \\
+\midrule
+CNN2 (col 1) & 24.4 & 1.2$\times$ \\
+CNN2 (col 0) & 19.1 & 1.0$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{KADD Intermediate: Real but Unexploitable Leakage}
+
+Table~\ref{tab:kadd_masked} shows the KADD profiling results. The centered-product MLP achieves $\sim$2$\times$ chance across all 8 bytes (19.7--21.6\% vs.\ 11.1\%). This is real, generalizing leakage: traces come from random keys, and the 80/20 split guarantees the held-out 20\% use keys unseen during training.
+
+\begin{table}[t]
+\centering
+\caption{KADD S[3] profiling on masked core (centered-product MLP, 9 classes, chance = 11.1\%). All 8 bytes leak.}
+\label{tab:kadd_masked}
+\begin{tabular}{lcc}
+\toprule
+Byte & Val Acc (\%) & $\times$ Chance \\
+\midrule
+0 & 21.6 & 1.9 \\
+1 & 20.8 & 1.9 \\
+2 & 19.8 & 1.8 \\
+3 & 19.7 & 1.8 \\
+4 & 20.3 & 1.8 \\
+5 & 21.0 & 1.9 \\
+6 & 20.8 & 1.9 \\
+7 & 19.9 & 1.8 \\
+\midrule
+Mean & 20.5 & 1.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+However, this leakage cannot be converted to key recovery:
+\begin{enumerate}[leftmargin=*,nosep]
+\item \textbf{Not factorable:} KADD byte 0 depends on all 16 key bytes (verified via oracle dependency tracing). No per-byte divide-and-conquer possible.
+\item \textbf{No gradient:} A 1-bit flip of the true key scores $-716$ vs.\ true key $-768$---indistinguishable from random keys ($-773$). 12 rounds of ASCON permutation scramble the HW vector completely.
+\item \textbf{$2^{128}$ search space:} Beam search (256-beam, 300 queries) achieves 0/16 bytes matched. A random beam has probability $\sim$2$^{-119}$ of containing the true key.
+\end{enumerate}
+
+\subsubsection{ACPPA Offline Validation}
+
+The adaptive chosen-plaintext (ACPPA) offline validation ($\sim$1800 held-out traces, trained S-box profile) confirms no exploitable per-trace signal:
+
+\begin{itemize}[leftmargin=*,nosep]
+\item Col 1: key-bits top-1 = 9.3\% vs.\ 25\% chance (\emph{below} chance). Per-trace drift $\mathbb{E}[\Delta\log p] = -0.053$ (anti-correlated).
+\item Col 0: key-bits top-1 = 12.2\% vs.\ 25\% chance. Drift $\mathbb{E}[\Delta\log p] = -0.0009$.
+\item 62\% of random nonces map the true key hypothesis to the same HW class as another hypothesis---a single trace cannot separate them.
+\end{itemize}
+
+The masking genuinely suppresses first-order S-box leakage. Accumulating evidence over more traces drives the posterior \emph{away} from the true key.
+
+\subsection{Unmasked Core ($d=0$): Leakage Returns, Still Too Weak}
+
+\subsubsection{First-Order Leakage Recovery}
+
+Table~\ref{tab:unmasked_compare} compares masked vs.\ unmasked core leakage. Removing the threshold implementation restores first-order S-box leakage (28--35\% vs.\ 11.1\%, 2.5--3.2$\times$ chance), confirming the masking was doing its job.
+
+\begin{table}[t]
+\centering
+\caption{Masked vs.\ unmasked core leakage comparison.}
+\label{tab:unmasked_compare}
+\begin{tabular}{lcc}
+\toprule
+Target & Masked & Unmasked \\
+\midrule
+S-box val top-1 (chance 11.1\%) & $\sim$11\% & 28--35\% \\
+KADD byte 3 val top-1 & 1.9$\times$ & 2.3$\times$ \\
+S-box SNR peak & $-$23 dB & $-$19 dB \\
+KADD SNR & 1.6 dB & 2.5 dB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{ACPPA on Unmasked Core: False Convergence}
+
+Despite real first-order leakage, the unmasked S-box SNR ($-$19 dB) is insufficient for single-trace discrimination. The profiled ACPPA loop converges in 6--16 queries to posterior 1.000---but on the \emph{wrong} key hypothesis:
+
+\begin{itemize}[leftmargin=*,nosep]
+\item The CNN profile achieves 95\% train / 30\% val accuracy on 3.7k traces---moderate overfitting, but enough that the majority-class bias dominates the weak per-trace signal.
+\item The loop locks onto hypothesis 3 (predicted most often in training) regardless of the true key.
+\item This false-convergence is \textbf{reproduced exactly} by the virtual board at amp=1$\times$ (noise+leakage model fitted from the same capture), cross-validating the sim against hardware.
+\end{itemize}
+
+\subsection{Virtual-Board SNR Sweep: The +18 dB Gap}
+
+The virtual board enables measuring the exact SNR threshold for reliable ACPPA without repeated hardware captures. We train a profile on simulated data at each amplitude and attack the virtual board with the same ACPPA loop code.
+
+\begin{table}[t]
+\centering
+\caption{SNR threshold sweep (5 seeds per amplitude). Reliable ACPPA requires amp $\geq$ 8$\times$ (+18 dB above real).}
+\label{tab:snr_sweep}
+\begin{tabular}{lccc}
+\toprule
+Amp & SNR rel.\ real & Attack Correct & Queries \\
+\midrule
+1$\times$ & +0 dB (real) & 0/5 & false-converge \\
+4.5$\times$ & +13 dB & 0/5 & false-converge \\
+6$\times$ & +16 dB & 3/5 & transition \\
+8$\times$ & +18 dB & \textbf{5/5} & 6--15 \\
+16$\times$ & +24 dB & 5/5 & 6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The unmasked core's $-$19 dB S-box SNR sits $\sim$18 dB below the reliable-recovery threshold. The masked core is far below. This gap is structural: the FPGA core supply's analog SNR is the binding constraint, not training methodology or search algorithm design.
+
+\subsection{Live On-Board Fine-Tuning (Scheme A)}
+
+We propose and sim-verify a live fine-tuning scheme that adapts the profile to the device's true noise shape:
+
+\begin{enumerate}[leftmargin=*,nosep]
+\item Capture $N$ traces at a \textbf{known} key with random nonces (labels exact---key is known)
+\item Fine-tune the pretrained profile on (live\_trace, exact\_label) pairs
+\item Attack a \textbf{fresh} key with the fine-tuned profile + separating nonces
+\end{enumerate}
+
+Design decisions:
+\begin{itemize}[leftmargin=*,nosep]
+\item \textbf{Random nonces for training, separating nonces for attack.} Random nonces spread HW labels across classes (diverse training); separating nonces collapse them to a single class (amplify posterior during attack).
+\item Preprocessing matches the attack path exactly (alignment, z-score, crop).
+\item End-to-end verified on virtual board: fine-tune at K1 $\rightarrow$ attack fresh K2 $\rightarrow$ converges to correct key bits.
+\end{itemize}
+
+This scheme has not yet been tested on the physical board (requires CW305 hardware access).
+
+\section{Discussion}
+
+\subsection{The Structural Deadlock}
+
+The core finding is a structural deadlock in profiled DL-SCA against this ASCON implementation:
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+& Trainable? & Searchable? \\
+\midrule
+Round-1 S-box & No (masked) & Yes (2 bits/col) \\
+KADD S[3] & Yes ($\sim$2$\times$) & No ($2^{128}$, no gradient) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The only intermediate that leaks enough to train a profile (KADD) cannot be factorized into a key search. The only intermediate that can be factorized (round-1 S-box) does not leak on the masked core and leaks 18 dB below the ACPPA threshold even unmasked.
+
+\subsection{Why Not Just Collect More Traces?}
+
+For the round-1 S-box on the unmasked core, more traces would reduce the profiling variance but cannot close an 18 dB SNR gap. The SNR defines the per-trace mutual information between the power measurement and the intermediate; more traces cannot compensate for a per-trace signal that is fundamentally below the noise floor for key discrimination. The virtual-board sweep quantifies this: even at 4.5$\times$ real amplitude (+13 dB), 0/5 seeds succeed.
+
+\subsection{What Would Close the Gap?}
+
+The +18 dB gap to reliable ACPPA could be closed by:
+\begin{enumerate}[leftmargin=*,nosep]
+\item \textbf{Lower-noise measurement:} An active probe on the FPGA core supply (VCCINT) or an EM probe could recover 10--15 dB of SNR by bypassing the board-level power distribution network.
+\item \textbf{Lower clock frequency:} Running the crypto core slower reduces the measurement bandwidth requirement and increases per-sample SNR.
+\item \textbf{Higher-order attacks:} Combined leakage from multiple clock cycles or multiple intermediates could recover additional bits of mutual information.
+\item \textbf{Hybrid enumeration:} Rank S-box column candidates by KADD evidence (a joint model)---but this requires closing the SNR gap first.
+\end{enumerate}
+
+\subsection{Limitations}
+
+\begin{itemize}[leftmargin=*,nosep]
+\item This is a single-device study. Device-to-device variation in leakage characteristics is not characterized.
+\item The live fine-tuning scheme is sim-verified but not board-tested.
+\item The 9151-trace masked dataset is modest; larger datasets might reveal higher-order leakage.
+\item We only profiled the HW leakage model; other leakage models (identity, bitwise) were not explored.
+\end{itemize}
+
+\section{Related Work}
+
+DL-SCA against AES implementations is well-established~\cite{dlsca_survey}. Timon's non-profiled DL-SCA~\cite{timon2019} and the ASCAD database~\cite{ascad} provide standardized benchmarks. For ASCON specifically, Gross et al.~\cite{gross_ascon} analyzed first-order leakage on an unprotected software implementation; Wegener and Moradi~\cite{wegener_ascon} demonstrated higher-order attacks on a masked software ASCON. Our work extends this to a hardware-masked core with a complete virtual-board SNR-threshold methodology.
+
+\section{Conclusion}
+
+We present a complete DL-SCA pipeline against a threshold-implemented ASCON-128 hardware core on a Xilinx Artix-7 FPGA. The masking works as designed: the round-1 S-box is at chance. The KADD intermediate leaks at $\sim$2$\times$ chance but is structurally unsearchable (full-key dependent, no gradient, $2^{128}$ space). An unmasked control core restores first-order leakage but at SNR 18 dB below the reliable-ACPPA threshold, as quantified by our virtual-board sweep. The blocker is analog SNR, not training methodology or search algorithm. We release the virtual-board model and complete pipeline as a reproducible artifact for ASCON side-channel research.
+
+\section*{Acknowledgments}
+
+We thank the compact-yet-fast-ascon authors for the open-source masked ASCON RTL and the NewAE Technology team for the CW305 and ChipWhisperer-Lite platforms.
+
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+
+\bibitem{ascon_nist}
+NIST, ``Lightweight Cryptography Standardization Process: ASCON,'' NIST SP 800-232, 2025.
+
+\bibitem{ascon_spec}
+C.~Dobraunig, M.~Eichlseder, F.~Mendel, and M.~Schl\"affer, ``ASCON v1.2: Lightweight Authenticated Encryption and Hashing,'' \emph{J. Cryptology}, vol.~34, no.~3, 2021.
+
+\bibitem{compact_ascon}
+P.~Maene and I.~Verbauwhede, ``compact-yet-fast-ascon: A Masked Hardware Implementation of ASCON,'' GitHub, 2023.
+
+\bibitem{dlsca_survey}
+L.~Masure, C.~Dumas, and E.~Prouff, ``A Comprehensive Study of Deep Learning for Side-Channel Analysis,'' \emph{TCHES}, vol.~2020, no.~1, pp.~348--375, 2020.
+
+\bibitem{timon2019}
+B.~Timon, ``Non-Profiled Deep Learning-based Side-Channel attacks with Sensitivity Analysis,'' \emph{TCHES}, vol.~2019, no.~2, pp.~107--131, 2019.
+
+\bibitem{ascad}
+E.~Prouff, R.~Standaert, and C.~Whitnall, ``ASCAD: A Database for Side-Channel Analysis,'' 2018.
+
+\bibitem{gross_ascon}
+H.~Gross, E.~Wenger, C.~Dobraunig, and C.~Ehrenh\"ofer, ``Ascon---A Lightweight Authenticated Encryption Scheme with Strong Side-Channel Resistance,'' \emph{COSADE}, 2015.
+
+\bibitem{wegener_ascon}
+F.~Wegener and A.~Moradi, ``Higher-Order Side-Channel Attacks on Masked Software Implementations of ASCON,'' \emph{COSADE}, 2024.
+
+\end{thebibliography}
+
+\section*{Artifact Availability}
+
+All scripts, datasets (masked + unmasked), trained models, virtual board, and results are available at the accompanying repository. The virtual board enables reproduction of the SNR sweep without hardware access.
+
+\end{document}

@@ -20,11 +20,12 @@
 // ============================================================================
 import ascon_params::d;
 import ascon_params::num_shares;
+import ascon_params::SBOX_RAND_WIDTH;
 
 module ascon_sbox_d2 (
     input  logic clk,
     input  logic [((d+1)*5)-1:0] x_in, // 5 bit × (d+1) share
-    input  logic [((d+1)*(d)/2)-1:0] fresh_r, // 3 bit di fresh per ogni AND
+    input  logic [SBOX_RAND_WIDTH-1:0] fresh_r, // 3 bit di fresh per ogni AND
     input logic sel_masked_round, // selettore per mascheramento
     output logic [((d+1)*5)-1:0] x_out,
     output logic [((d+1)*5)-1:0] x_out_noMask

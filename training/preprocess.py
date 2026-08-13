@@ -58,8 +58,13 @@ def align_trace(trace, ref):
 
 
 def zscore(traces):
+    """Per-trace z-score (works for a single 1-D trace or a (N, W) batch)."""
+    single = traces.ndim == 1
+    if single:
+        traces = traces[None]
     std = traces.std(axis=1, keepdims=True)
-    return (traces - traces.mean(axis=1, keepdims=True)) / np.maximum(std, 1e-9)
+    out = (traces - traces.mean(axis=1, keepdims=True)) / np.maximum(std, 1e-9)
+    return out[0] if single else out
 
 
 def main():

@@ -1,6 +1,7 @@
-// tb_verify.sv — minimal testbench for ascon_top that drives a single
-// encryption and compares ciphertext+tag against expected values read from
-// a file written by the Python oracle.
+// tb_verify.sv — multi-vector testbench for ascon_top.
+// Drives the 5 NIST KAT vectors (same as sanity_check.py), compares the
+// simulated host readback (tag[:12] + ct[:4], LSB-first like the FPGA reg
+// file) against expected values from the Python oracle.
 `timescale 1ns/1ps
 
 module tb_verify;
@@ -28,11 +29,41 @@ module tb_verify;
     wire [319:0] state_reg;
 
     reg [127:0] exp_ro;       // expected readback from Python oracle
+    reg [127:0] simulated_ro; // simulated readback, byte-reversed like FPGA reg file
     reg done_flag;
+    reg [127:0] latched_ct;   // ciphertext latched on ciphertext_valid posedge
+    reg [63:0]  latched_tag1, latched_tag2; // tag latched on ready_tag posedge
+    integer errors;
 
-    // Read expected value from file
-    integer fd;
-    reg [255:0] line_buf;
+    // The FPGA register file returns bytes LSB-first (reg_read_data =
+    // reg_*[reg_bytecnt*8+:8]), so byte 0 of the host readback is bits [7:0]
+    // of each captured register. Replicate that byte reversal here.
+    function automatic [127:0] rev_bytes128(input [127:0] x);
+        for (int i = 0; i < 16; i = i + 1)
+            rev_bytes128[i*8 +: 8] = x[(15-i)*8 +: 8];
+    endfunction
+    function automatic [63:0] rev_bytes64(input [63:0] x);
+        for (int i = 0; i < 8; i = i + 1)
+            rev_bytes64[i*8 +: 8] = x[(7-i)*8 +: 8];
+    endfunction
+    function automatic [31:0] rev_bytes32(input [31:0] x);
+        for (int i = 0; i < 4; i = i + 1)
+            rev_bytes32[i*8 +: 8] = x[(3-i)*8 +: 8];
+    endfunction
+
+    // 5 NIST KAT vectors, byte order mirrored from the FPGA wrapper:
+    // key1 = crypt_key[63:0] = host key bytes 0..7 LSB-first, etc.
+    typedef struct {
+        logic [63:0] key1, key2, nonce1, nonce2;
+        logic [127:0] exp;
+    } vector_t;
+    vector_t vectors [5] = '{
+        '{64'h0706050403020100, 64'h0f0e0d0c0b0a0908, 64'h0706050403020100, 64'h0f0e0d0c0b0a0908, 128'h19c8f96a6b6a4fe5caa719a719378c6a},
+        '{64'hbebafecaefbeadde, 64'h0706050403020100, 64'h8070605040302010, 64'h00f0e0d0c0b0a090, 128'h94f0b9bc9fa873085c828fe6d1dc9341},
+        '{64'h0000000000000000, 64'h0000000000000000, 64'h0000000000000000, 64'h0000000000000000, 128'h3e2a56698ec81e2e053815e89761cfb5},
+        '{64'hffffffffffffffff, 64'hffffffffffffffff, 64'hffffffffffffffff, 64'hffffffffffffffff, 128'h6a9d3f7ad41bbe299bf43620864ebb5a},
+        '{64'hefcdab8967452301, 64'hefcdab8967452301, 64'h1032547698badcfe, 64'h1032547698badcfe, 128'h502074376152408dc9d470724dc496f3}
+    };
 
     always #5 clk = ~clk;
 
@@ -81,32 +112,79 @@ module tb_verify;
         data_in = 0;
     endtask
 
+    task automatic run_vector(input vector_t v, input integer idx);
+        begin
+            // Set key and nonce (mirror FPGA wrapper byte order)
+            key1 = v.key1;
+            key2 = v.key2;
+            nonce1 = v.nonce1;
+            nonce2 = v.nonce2;
+            exp_ro = v.exp;
+
+            // Start encryption
+            // INIT_LOAD -> INIT_ROUND_SHIFT needs start high during a posedge while in INIT_LOAD;
+            // hold both for several cycles to avoid a race with the FSM sampling them.
+            start = 1;
+            load_data = 1;
+            repeat (4) @(posedge clk);
+            start = 0;
+            load_data = 0;
+
+            // Wait for ready_for_data (core wants AD input)
+            wait(ready_for_data);
+            @(posedge clk);
+            set_ad_input();
+            @(posedge clk);
+            valid_data_in = 0;
+
+            // Wait for ready_for_data (core wants PT input) 
+            wait(ready_for_data);
+            @(posedge clk);
+            set_pt_input();
+            // ciphertext_valid pulses while valid_data_in==1 in ABSORB_MSG_DATA;
+            // latch ciphertext on the posedge like the FPGA register file does.
+            wait(ciphertext_valid);
+            @(posedge clk);
+            latched_ct = ciphertext;
+            $display("CT = %032h", latched_ct);
+            valid_data_in = 0;
+
+            // tag_valid (ready_tag) pulses during the final diffusion round;
+            // latch tag on the posedge like the FPGA register file does.
+            wait(ready_tag);
+            @(posedge clk);
+            latched_tag2 = tag2;
+            latched_tag1 = tag1;
+            $display("TAG = %016h%016h", latched_tag2, latched_tag1);
+
+            // Wait for done
+            done_flag = 0;
+            repeat (1000) @(posedge clk) if (done) done_flag = 1;
+
+            if (!done_flag) begin
+                $display("FAIL v%0d: core never asserted done", idx);
+                errors = errors + 1;
+            end
+
+            // Build readback the way the FPGA host sees it: tag1 (8B, LSB-first),
+            // then tag2 low 4B (LSB-first), then ciphertext low 4B (LSB-first).
+            simulated_ro = {rev_bytes64(latched_tag1), rev_bytes32(latched_tag2[31:0]), rev_bytes32(latched_ct[31:0])};
+            $display("SIM readback = %032h", simulated_ro);
+
+            if (simulated_ro == exp_ro)
+                $display("PASS v%0d: simulation matches expected readback", idx);
+            else begin
+                $display("FAIL v%0d: sim=%032h exp=%032h", idx, simulated_ro, exp_ro);
+                errors = errors + 1;
+            end
+        end
+    endtask
+
     initial begin
         $dumpfile("tb_verify.fst");
         $dumpvars(0, tb_verify);
 
-        // Read expected readback (32 hex chars = 128 bits)
-        exp_ro = 0;
-        fd = $fopen("tb_verify_exp.txt", "r");
-        if (fd) begin
-            $fgets(line_buf, fd);
-            $fclose(fd);
-            // Parse hex string to 128-bit value
-            exp_ro = 128'h0;
-            for (int i = 0; i < 32; i = i + 1) begin
-                byte b;
-                if (line_buf[i*8 +: 8] >= "0" && line_buf[i*8 +: 8] <= "9")
-                    b = line_buf[i*8 +: 8] - "0";
-                else if (line_buf[i*8 +: 8] >= "a" && line_buf[i*8 +: 8] <= "f")
-                    b = line_buf[i*8 +: 8] - "a" + 10;
-                else
-                    b = line_buf[i*8 +: 8] - "A" + 10;
-                exp_ro = (exp_ro << 4) | b;
-            end
-            $display("EXP readback = %032h", exp_ro);
-        end else begin
-            $display("WARNING: tb_verify_exp.txt not found, skipping expected check");
-        end
+        errors = 0;
 
         // Reset
         reset_n = 0;
@@ -116,62 +194,15 @@ module tb_verify;
         reset_n_lfsr = 1;
         #10;
 
-        // Set key and nonce (case1: K=N=000102030405060708090a0b0c0d0e0f)
-        key1 = 64'h0001020304050607;
-        key2 = 64'h08090a0b0c0d0e0f;
-        nonce1 = 64'h0001020304050607;
-        nonce2 = 64'h08090a0b0c0d0e0f;
-
-        // Start encryption
-        start = 1;
-        load_data = 1;
-        @(posedge clk);
-        start = 0;
-        load_data = 0;
-
-        // Wait for ready_for_data (core wants AD input)
-        wait(ready_for_data);
-        @(posedge clk);
-        set_ad_input();
-        @(posedge clk);
-        valid_data_in = 0;
-
-        // Wait for ready_for_data (core wants PT input) 
-        wait(ready_for_data);
-        @(posedge clk);
-        set_pt_input();
-        @(posedge clk);
-        valid_data_in = 0;
-
-        // Wait for done
-        done_flag = 0;
-        repeat (1000) @(posedge clk) if (done) done_flag = 1;
-
-        if (!done_flag) begin
-            $display("FAIL: core never asserted done");
-            $finish;
+        for (int i = 0; i < 5; i = i + 1) begin
+            $display("=== vector %0d ===", i);
+            run_vector(vectors[i], i);
         end
 
-        // Check ciphertext + tag
-        wait(ciphertext_valid);
-        $display("CT = %032h", ciphertext);
-
-        wait(ready_tag);
-        $display("TAG = %016h%016h", tag2, tag1);
-
-        // Build readback = {tag[127:32], ct[31:0]} = {tag2[31:0], tag1, ciphertext[31:0]}
-        reg [127:0] simulated_ro;
-        simulated_ro = {tag2[31:0], tag1[63:0], ciphertext[31:0]};
-        $display("SIM readback = %032h", simulated_ro);
-
-        if (fd > 0) begin
-            if (simulated_ro == exp_ro)
-                $display("PASS: simulation matches expected readback");
-            else
-                $display("FAIL: sim=%032h exp=%032h", simulated_ro, exp_ro);
-        end else begin
-            $display("OK: simulation complete (no expected file)");
-        end
+        if (errors == 0)
+            $display("ALL 5 VECTORS PASS");
+        else
+            $display("FAILURES: %0d/5", errors);
 
         $finish;
     end
