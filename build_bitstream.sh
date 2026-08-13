@@ -8,19 +8,27 @@ VIVADO=/tools/2026.1/Vivado/bin/vivado
 TCL=build_ascon_cw305.tcl
 OUTDIR=vivado_ascon/build_logs
 
+if [ -n "$ASCON_UNMASKED" ]; then
+    LABEL="unmasked d=0 ASCON-128"
+    LOG=rebuild_unmasked
+else
+    LABEL="masked ASCON-128"
+    LOG=rebuild4
+fi
+
 mkdir -p "$OUTDIR"
 
-echo "[+] Starting Vivado synthesis (CW305 100t, masked ASCON-128)..."
-echo "    Log: $OUTDIR/rebuild4.log"
-echo "    This takes 25-45 minutes. Watch with:  tail -f $OUTDIR/rebuild4.stdout"
+echo "[+] Starting Vivado synthesis (CW305 100t, $LABEL)..."
+echo "    Log: $OUTDIR/$LOG.log"
+echo "    This takes 25-45 minutes. Watch with:  tail -f $OUTDIR/$LOG.stdout"
 echo ""
 
 rm -f vivado.log vivado.jou
 
 $VIVADO -mode batch -source "$TCL" \
-    -log "$OUTDIR/rebuild4.log" \
-    -journal "$OUTDIR/rebuild4.jou" \
-    > "$OUTDIR/rebuild4.stdout" 2>&1
+    -log "$OUTDIR/$LOG.log" \
+    -journal "$OUTDIR/$LOG.jou" \
+    > "$OUTDIR/$LOG.stdout" 2>&1
 
 RC=$?
 if [ $RC -eq 0 ] && [ -f vivado_ascon/ascon_cw305_top.bit ]; then

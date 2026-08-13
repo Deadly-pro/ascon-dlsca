@@ -8,6 +8,9 @@ set xdc         [file join $PROJ_DIR fpga cw305.xdc]
 set defs_dir    [file join $PROJ_DIR fpga]
 
 create_project -in_memory -part $PART
+if {[info exists env(ASCON_UNMASKED)]} {
+    set_property verilog_define ASCON_UNMASKED [current_fileset]
+}
 read_verilog -sv $fpga_srcs
 read_verilog -sv $rtl_srcs
 read_xdc $xdc

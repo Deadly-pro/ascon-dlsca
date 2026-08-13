@@ -124,14 +124,12 @@ def main():
         args.window = w_full if args.arch in ('cnn2', 'mlp') else min(400, w_full)
     traces = traces[:, :args.window]
     y = labels[:, args.column].astype(np.int64)
-    classes = np.unique(y)
+    classes = np.arange(9)  # HW of a byte: fixed 0..8 space (empty classes get weight 0)
     n_classes = len(classes)
     name = os.path.splitext(os.path.basename(args.npz))[0]
     hidden = args.hidden or ([128] if args.arch in ('cnn1', 'cnn2') else [128, 256, 256])
 
-    # remap labels to contiguous 0..n_classes-1
-    ymap = {c: i for i, c in enumerate(classes)}
-    y = np.array([ymap[v] for v in y])
+    y = y.copy()
     print(f'{name} col{args.column} [{args.arch}] ({args.target}): {n} traces x {args.window} '
           f'window, {n_classes} classes {classes.tolist()}, '
           f'train {int(0.8*n)} / val {n-int(0.8*n)}')

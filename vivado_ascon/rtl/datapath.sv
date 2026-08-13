@@ -8,6 +8,9 @@ import ascon_params::STATE_WIDTH;
 import ascon_params::SHIFT_PAR_D_PLUS_1;
 import ascon_params::NUMBER_BIT_MASK;
 import ascon_params::RAND_WIDTH;
+import ascon_params::RAND_WIDTH_EFF;
+import ascon_params::MASKS_WIDTH;
+import ascon_params::SBOX_RAND_WIDTH;
 import ascon_params::LFSR_WIDTH;
 
 module ascon_datapath (
@@ -63,12 +66,12 @@ module ascon_datapath (
 
     // --------------------------------------------------------------------
     // LFSR sintetizzabile (niente translate_off)
-    logic [RAND_WIDTH-1:0] lfsr_out; //output dell'LFSR
+    logic [RAND_WIDTH_EFF-1:0] lfsr_out; //output dell'LFSR
     logic [LFSR_WIDTH-1:0] lfsr_state_in;
     logic [LFSR_WIDTH-1:0] lfsr_state_out;
     // synopsys translate_off 
     lfsr lfst_inst (
-        .data_in   ({RAND_WIDTH{1'b0}}),
+        .data_in   ({RAND_WIDTH_EFF{1'b0}}),
         .state_in  (lfsr_state_in),
         .state_out (lfsr_state_out),
         .data_out  (lfsr_out)
@@ -83,10 +86,17 @@ module ascon_datapath (
     end
 
     //segnali di randomicità :
-    logic [d*COL_SIZE*PAR-1:0] random_masks;        // mask per shareCreator
-    logic [(d+1)*d/2-1:0]      random_masks_sbox;   // mask per S-Box DOM
-    assign random_masks      = lfsr_out[0+:d*COL_SIZE*PAR];
-    assign random_masks_sbox = lfsr_out[d*COL_SIZE*PAR+:((d+1)*d/2)];
+    logic [MASKS_WIDTH-1:0]     random_masks;        // mask per shareCreator
+    logic [SBOX_RAND_WIDTH-1:0] random_masks_sbox;   // mask per S-Box DOM
+    generate
+        if (d > 0) begin : gen_random_masks
+            assign random_masks      = lfsr_out[0+:d*COL_SIZE*PAR];
+            assign random_masks_sbox = lfsr_out[d*COL_SIZE*PAR+:((d+1)*d/2)];
+        end else begin : gen_no_random_masks
+            assign random_masks      = '0;
+            assign random_masks_sbox = '0;
+        end
+    endgenerate
 
     // --------------------------------------------------------------------
     // Registri di stato per share
@@ -333,7 +343,7 @@ module ascon_datapath (
     generate
         if (d == 2) begin : gen_cog
             for (p = 0; p < PAR; p++) begin : gen_sbox
-                logic [(d+1)*d/2-1:0] fresh_r;
+                logic [SBOX_RAND_WIDTH-1:0] fresh_r;
                 assign fresh_r = { state_reg_out[(35+p)%64], state_reg_out[(37+p)%64], state_reg_out[(11+p)%64]  };
                 ascon_sbox_d2 u_sbox (
                     .clk(clk), .x_in(sbox_input[p]), .fresh_r(fresh_r),
@@ -344,7 +354,7 @@ module ascon_datapath (
             end
         end else if (d == 1) begin : gen_no_cog
             for (p = 0; p < PAR; p++) begin : gen_sbox
-                logic [(d+1)*d/2-1:0] fresh_r;
+                logic [SBOX_RAND_WIDTH-1:0] fresh_r;
                 assign fresh_r = state_reg_out[(11+p)%64];
                 ascon_sbox_d2 u_sbox (
                     .clk(clk), .x_in(sbox_input[p]), .fresh_r(fresh_r),
@@ -355,7 +365,7 @@ module ascon_datapath (
             end
         end else begin : gen_no_changing
             for (p = 0; p < PAR; p++) begin : gen_sbox
-                logic [(d+1)*d/2-1:0] fresh_r;
+                logic [SBOX_RAND_WIDTH-1:0] fresh_r;
                 assign fresh_r = random_masks_sbox;
                 ascon_sbox_d2 u_sbox (
                     .clk(clk), .x_in(sbox_input[p]), .fresh_r(fresh_r),

@@ -61,7 +61,11 @@ def main():
     ap.add_argument('--key', type=str, default=None, help='16-byte key hex; random if omitted')
     ap.add_argument('--no-verify', action='store_true', help='skip per-trace readback verification')
     ap.add_argument('--max-fail', type=int, default=10, help='abort after N consecutive failures')
+    ap.add_argument('--max-retry', type=int, default=6,
+                    help='max arm/go attempts per (key, nonce) before declaring flat')
     ap.add_argument('--gain', type=int, default=20)
+    ap.add_argument('--offset', type=int, default=0,
+                    help='ADC offset DAC value (raw int; shifts DC baseline down)')
     ap.add_argument('--clip-threshold', type=float, default=0.49,
                     help='reject traces with |trace|.max() above this (clipping)')
     ap.add_argument('--std-floor', type=float, default=0.01,
@@ -92,7 +96,7 @@ def main():
     scope = cw.scope()
     scope.gain.db = args.gain
     scope.adc.samples = args.samples
-    scope.adc.offset = 0
+    scope.adc.offset = args.offset
     scope.clock.adc_src = 'clkgen_x4'
     scope.clock.clkgen_freq = 40e6
     scope.clock.reset_adc()
@@ -123,37 +127,74 @@ def main():
     for i, (key, nonce) in enumerate(plan):
         t.loadEncryptionKey(key)
         t.loadInput(nonce)
-        scope.arm()
-        t.go()
-        ret = scope.capture()
-        if ret:
-            print(f"    trace {i}: trigger timeout, skipping")
-            _drain(t)
-            continue
-
-        ct = bytes(t.readOutput())
-
-        if not args.no_verify:
-            exp = exp_list[i]
-            if ct != exp:
-                print(f"    trace {i}: VERIFY FAILED got={ct.hex()} exp={exp.hex()} — skipping")
-                verify_fails += 1
-                if verify_fails >= args.max_fail:
-                    sys.exit(f"aborting: {verify_fails} consecutive verify failures")
+        # The arm/go/trigger sequence has a known race: ~50 % of captures come
+        # back flat because the ADC triggered on the tail of the previous
+        # transaction instead of this op. The scope.capture() return flag is
+        # unreliable here (both timeout and success can carry a live trace), so
+        # judge purely by content + oracle verify. Retry the same (key, nonce)
+        # a few times, keeping only a verified, non-flat, non-clipped capture.
+        attempt = 0
+        while True:
+            attempt += 1
+            scope.arm()
+            t.go()
+            scope.capture()
+            trace = scope.get_last_trace()
+            if trace is None or trace.size == 0 or trace.size < 64:
+                if attempt >= args.max_retry:
+                    flats += 1
+                    break
+                _drain(t)
+                continue
+            if trace.size != args.samples:
+                if attempt >= args.max_retry:
+                    flats += 1
+                    break
+                _drain(t)
+                continue
+            if not np.isfinite(trace).all():
+                if attempt >= args.max_retry:
+                    flats += 1
+                    break
+                _drain(t)
+                continue
+            if trace.std() < args.std_floor:
+                if attempt >= args.max_retry:
+                    flats += 1
+                    break
+                _drain(t)
                 continue
 
-        trace = scope.get_last_trace()
-        peak = float(np.abs(trace).max())
-        if peak > args.clip_threshold:
-            clips += 1; continue
+            ct = bytes(t.readOutput())
 
-        if trace.std() < args.std_floor:
-            flats += 1; continue
+            if not args.no_verify:
+                exp = exp_list[i]
+                if ct != exp:
+                    print(f"    trace {i} (att {attempt}): VERIFY FAILED got={ct.hex()} exp={exp.hex()} — skipping")
+                    verify_fails += 1
+                    if verify_fails >= args.max_fail:
+                        sys.exit(f"aborting: {verify_fails} consecutive verify failures")
+                    break
 
-        traces.append(trace)
-        keys.append(key)
-        nonces.append(nonce)
-        cts.append(ct)
+            peak = float(np.abs(trace).max())
+            if not np.isfinite(peak):
+                if attempt >= args.max_retry:
+                    flats += 1
+                    break
+                _drain(t)
+                continue
+            if peak > args.clip_threshold:
+                clips += 1
+                if attempt >= args.max_retry:
+                    break
+                _drain(t)
+                continue
+            else:
+                traces.append(trace)
+                keys.append(key)
+                nonces.append(nonce)
+                cts.append(ct)
+                break
         if i % 50 == 0 or i == args.num - 1:
             print(f"    {i+1}/{args.num} (stored: {len(traces)}, verify_err: {verify_fails}, clip: {clips}, flat: {flats})")
 

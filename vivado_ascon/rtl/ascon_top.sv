@@ -44,6 +44,9 @@ import ascon_params::STATE_WIDTH; // STATE_WIDTH : larghezza dello stato (320 bi
 import ascon_params::SHIFT_PAR_D_PLUS_1; // SHIFT_PAR_D_PLUS_1 : shift per il parallelismo (d+1)*PAR -> numero shift per esecuzione non mascherata
 import ascon_params::NUMBER_BIT_MASK;  // NUMBER_BIT_MASK : numero di bit da processare per round mascherato (64 bit /PAR bit) (estremo superiore)
 import ascon_params::RAND_WIDTH; // RAND_WIDTH : numero di bit di casualità richiesti
+import ascon_params::RAND_WIDTH_EFF;
+import ascon_params::MASKS_WIDTH;
+import ascon_params::SBOX_RAND_WIDTH;
 import ascon_params::LFSR_WIDTH; // LFSR_WIDTH : larghezza dell'LFSR (31 bit)
 
 module ascon_top (
@@ -125,25 +128,32 @@ module ascon_top (
     
     //segnali per LFSR:
     
-    logic [RAND_WIDTH-1:0] lfsr_out; //output dell'LFSR
+    logic [RAND_WIDTH_EFF-1:0] lfsr_out; //output dell'LFSR
     logic [LFSR_WIDTH-1:0] lfsr_state_in;
     logic [LFSR_WIDTH-1:0] lfsr_state_out;
     
     // == istanzio LFSR (PRNG) ==
     lfsr lfst_inst (
-        .data_in ({RAND_WIDTH{1'b0}}),
+        .data_in ({RAND_WIDTH_EFF{1'b0}}),
         .state_in    (lfsr_state_in),
         .state_out   (lfsr_state_out),
         .data_out    (lfsr_out)
     );
     //segnali di randomicità :
-    logic [d*COL_SIZE*PAR-1:0] random_masks; //maschere casuali per la creazione delle shares
+    logic [MASKS_WIDTH-1:0] random_masks; //maschere casuali per la creazione delle shares
 
     /* verilator lint_off UNUSED */ //Per il changing of the guards non le utilizzo
-    logic [(d+1)*d/2-1:0] random_masks_sbox; //maschere casuali per la s-box
+    logic [SBOX_RAND_WIDTH-1:0] random_masks_sbox; //maschere casuali per la s-box
     /* verilator lint_on UNUSED */
-    assign random_masks = lfsr_out[0+:d*COL_SIZE*PAR]; //prendo i primi d*COL_SIZE*PAR bit dell'LFSR per lo share-creator
-    assign random_masks_sbox = lfsr_out[d*COL_SIZE*PAR+:((d+1)*d/2)]; //prendo i successivi (d+1)*d/2 bit dell'LFSR per s-box
+    generate
+        if (d > 0) begin : gen_random_masks
+            assign random_masks = lfsr_out[0+:d*COL_SIZE*PAR]; //prendo i primi d*COL_SIZE*PAR bit dell'LFSR per lo share-creator
+            assign random_masks_sbox = lfsr_out[d*COL_SIZE*PAR+:((d+1)*d/2)]; //prendo i successivi (d+1)*d/2 bit dell'LFSR per s-box
+        end else begin : gen_no_random_masks
+            assign random_masks = '0;
+            assign random_masks_sbox = '0;
+        end
+    endgenerate
 
     // reset dell'LFSR: NOTA BENE -> ha un reset diverso per svolgere il TVLA (se usiamo il reset software l'LFSR non viene resettato)
     // un'altra possibilità sarebbe stata quella di resettare anche LFSR, ma caricare un seed casuale dall'esterno, ogni volta (dovevo cambiare più cose)
@@ -539,7 +549,7 @@ module ascon_top (
             
             for (p = 0; p < PAR; p++) begin : gen_sbox
                 // la fresh_r è corretta per il changing of the guards perchè i bit all'interno dello status reg sono già shiftati
-                logic [(d+1)*d/2-1:0] fresh_r;
+                logic [SBOX_RAND_WIDTH-1:0] fresh_r;
                 assign fresh_r = { state_reg_out[(35+p)%64], state_reg_out[(37+p)%64], state_reg_out[(11+p)%64]  };
                 ascon_sbox_d2 u_sbox (
                     .clk(clk),
@@ -552,7 +562,7 @@ module ascon_top (
             end
         end else if (d == 1) begin : gen_no_cog //changing of the guards disabilitatio (d == 1)
             for (p = 0; p < PAR; p++) begin : gen_sbox
-                logic [(d+1)*d/2-1:0] fresh_r;
+                logic [SBOX_RAND_WIDTH-1:0] fresh_r;
                 assign fresh_r = state_reg_out[(11+p)%64];
                 ascon_sbox_d2 u_sbox (
                     .clk(clk),
@@ -565,7 +575,7 @@ module ascon_top (
             end
         end else begin : gen_no_changing
             for (p = 0; p < PAR; p++) begin : gen_sbox
-                logic [(d+1)*d/2-1:0] fresh_r;
+                logic [SBOX_RAND_WIDTH-1:0] fresh_r;
                 assign fresh_r = random_masks_sbox;
                 ascon_sbox_d2 u_sbox (
                     .clk(clk),

@@ -150,11 +150,10 @@ def main():
 
     # ---- 5. zoomed window (first half, where crypto op lives) ----
     v = std_t ** 2
-    # op is in the first ~400 samples (10 us at 40 MHz) — search first half
     half = samples // 2
     peak = int(np.argmax(v[:half]))
     lo = max(0, peak - 2000)
-    hi = min(samples, peak + 4000)
+    hi = min(samples - 1, peak + 4000)
     fig, ax = plt.subplots(figsize=(14, 4))
     ax.plot(t_us[lo:hi], mean_t[lo:hi], lw=0.8, label='mean')
     ax.fill_between(t_us[lo:hi], mean_t[lo:hi] - std_t[lo:hi], mean_t[lo:hi] + std_t[lo:hi],
