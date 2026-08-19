@@ -127,23 +127,39 @@ def separation(nonce16, column, model_support):
     return len({int(v) for v in pred if int(v) in model_support})
 
 
-def pick_separating_nonce(column, model_support, rng=None):
+def pick_separating_nonce(column, model_support, rng=None, post=None):
     """Choose the 2 nonce bits (of column c) that separate the hypotheses best.
 
     Returns a 16-byte nonce. Other nonce bytes are random (they affect the
     trace but not this column's label). Ties broken by wider class spread.
+
+    With `post` (current posterior over the 4 hypotheses) supplied, the pick
+    becomes posterior-aware: only hypotheses that are still plausibly alive
+    (posterior above ~1e-3) are required to separate. Once the loop has
+    narrowed to a single survivor, that survivor is what must distinguish
+    itself, so we choose a nonce where its predicted class differs from the
+    (now-dead) alternatives — this sharpens elimination instead of wasting
+    queries re-separating hypotheses that are already ruled out.
     """
     if rng is None:
         rng = np.random.default_rng()
     hyps = lab.all_hypotheses()
     best = None
+    # Posterior-aware: de-weight hypotheses the loop has already eliminated.
+    if post is not None:
+        alive = post > 1e-3
+        if alive.sum() == 0:
+            alive[post.argmax()] = True
+    else:
+        alive = np.ones(len(hyps), dtype=bool)
     for n0 in (0, 1):
         for n1 in (0, 1):
             nonce = np.zeros(16, dtype=np.uint8)
             nonce[column // 8] |= np.uint8(n0 << (column % 8))
             nonce[8 + column // 8] |= np.uint8(n1 << (column % 8))
             pred = lab.hypothesis_labels(column, nonce[None], hyps)[0]
-            s = {int(v) for v in pred if int(v) in model_support}
+            # class-set and pairwise distinct-class count over ALIVE hyps only
+            s = {int(v) for v in pred[alive] if int(v) in model_support}
             score = (len(s), sum(int(a) != int(b)
                                  for a in s for b in s if a != b))
             if best is None or score > best[0]:
@@ -377,12 +393,11 @@ def attack_column(prof, lq, col, args, rng, out_dir):
     session_posts = []
     t0 = time.time()
     n_captured = 0
-    # Scope state watchdog: repeated None (short/flat captures) means the
-    # ADC clock drifted. reset_adc() strikes happen inside LiveQuery.query;
-    # if the pool still can't fill, rebuild the scope connection entirely.
+    post = None
+    # Scope state watchdog
     pool_fail_streak = 0
     for q in range(1, args.max_queries + 1):
-        nonce = pick_separating_nonce(col, prof.support, rng)
+        nonce = pick_separating_nonce(col, prof.support, rng, post=post)
         pool = []
         while len(pool) < args.M:
             trace, _ct = lq.query(nonce)
