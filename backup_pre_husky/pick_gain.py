@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 r"""pick_gain.py — pick the best scope gain at the pipeline config.
 
-Runs a gain sweep at the collection config (40 MHz sample clock, 2000 samples,
-offset 700) and reports good/clip/flat counts and mean std per gain. The scope
-model (CW-Husky vs CW-Lite/CW-Pro) is auto-detected.
-
-Usage:
-    python3 pick_gain.py -b vivado_ascon/ascon_cw305_top.bit
-    python3 pick_gain.py --gains 25,20,15,10,5,0,-5,-10,-15
+The pilot's "recommended" is measured at extclk_x4/24000 samples, which is
+NOT the collection config (clkgen_x4, 2000 samples, offset 700). This probe
+tests the actual config: for each candidate gain, 10 captures, reports
+good/clip/flat counts and mean std. Prints the verdict + the exact
+collect_dataset command to run next.
 """
 import argparse
 import os
@@ -17,8 +15,7 @@ import numpy as np
 
 import chipwhisperer as cw
 
-from scope_config import connect_target, configure_scope, is_husky
-import scope_config
+from cw305_ascon_shim import wrap
 
 
 def main():
@@ -26,35 +23,46 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('-b', '--bitstream',
                     default=os.path.join(here, 'vivado_ascon', 'ascon_cw305_top.bit'))
-    ap.add_argument('--gains', type=str, default='25,20,15,10,5,0,-5,-10,-15',
+    ap.add_argument('--gains', type=str, default='20,15,10,5,0,-5',
                     help='comma-separated candidate gains')
     ap.add_argument('--n', type=int, default=10, help='captures per gain')
     args = ap.parse_args()
     gains = [int(g) for g in args.gains.split(',')]
 
-    if np.any(np.abs(gains) > 100) or len(gains) > 20:
-        sys.exit('gain list looks wrong; use -15..65 typical range')
-
-    w = connect_target(args.bitstream)
+    t = cw.target(None, cw.targets.CW305, force=True, bsfile=args.bitstream,
+                  fpga_id='100t', platform='cw305')
+    t.vccint_set(1.0)
+    t.pll.pll_enable_set(True)
+    t.pll.pll_outenable_set(False, 0)
+    t.pll.pll_outenable_set(True, 1)
+    t.pll.pll_outenable_set(False, 2)
+    t.pll.pll_outfreq_set(10e6, 1)
+    t.fpga_write(0x00, [0x19])
+    w = wrap(t)
     w.loadEncryptionKey(bytes.fromhex('0f1e2d3c4b5a69788796a5b4c3d2e1f0'))
     w.loadInput(bytes.fromhex('000102030405060708090a0b0c0d0e0f'))
 
-    s = configure_scope(gain=gains[0], samples=2000, offset=700, sample_rate=40e6)
-    print(f'[+] scope: {"CW-Husky" if is_husky(s) else "CW-Lite/CW-Pro"}')
+    s = cw.scope()
+    s.adc.samples = 2000
+    s.adc.offset = 700
+    s.clock.adc_src = 'clkgen_x4'
+    s.clock.clkgen_freq = 40e6
+    s.clock.reset_adc()
+    s.trigger.triggers = 'tio4'
 
     # ADC clock sanity: after a replug the scope can come up with adc_freq=0
     # (clock PLL not locked), which makes capture() divide by zero. Re-run
     # reset_adc() up to a few times; if it stays 0, report and exit cleanly.
-    for attempt in range(8):
+    for attempt in range(5):
         if s.clock.adc_freq and s.clock.adc_freq > 1e6:
             break
-        print(f'[!] adc_freq bad ({s.clock.adc_freq}) - re-syncing ADC clock '
-              f'(attempt {attempt + 1}/8)')
+        print(f'[!] adc_freq bad ({s.clock.adc_freq}) — re-syncing ADC clock '
+              f'(attempt {attempt + 1}/5)')
         s.clock.reset_adc()
     if not s.clock.adc_freq or s.clock.adc_freq <= 1e6:
         print(f'[!] ADC clock failed to lock (adc_freq={s.clock.adc_freq}). '
-              f'Check the USB connection, then replug and re-run.')
-        w.dis()
+              f'Re-seat the CW-Lite USB and re-run.')
+        t.dis()
         s.dis()
         sys.exit(2)
     print(f'[+] adc_freq = {s.clock.adc_freq/1e6:.1f} MHz')
@@ -62,9 +70,6 @@ def main():
     print(f"{'gain':>5} {'good':>5} {'clips':>5} {'flats':>5}  verdict")
     results = {}
     for gain in gains:
-        if is_husky(s) and not (scope_config.HUSKY_GAIN_MIN <= gain <= scope_config.HUSKY_GAIN_MAX):
-            print(f'{gain:>5}   out of Husky range (-15..65)')
-            continue
         s.gain.db = gain
         stds, clips, flats = [], 0, 0
         for _ in range(args.n):
@@ -72,7 +77,7 @@ def main():
             w.go()
             s.capture()
             tr = s.get_last_trace()
-            if tr is None or tr.size != 2000 or tr.std() < 0.001:
+            if tr is None or tr.size != 2000 or tr.std() < 0.01:
                 flats += 1
                 continue
             if np.abs(tr).max() > 0.49:
@@ -91,11 +96,11 @@ def main():
             print(f'{gain:>5} {nz:>5}/{args.n} {clips:>5} {flats:>5}  '
                   f'dead (all flat/clip)')
 
-    w.dis()
+    t.dis()
     s.dis()
 
     if not results:
-        print('\n[!] no gain stored anything - check cables/bitstream')
+        print('\n[!] no gain stored anything — check cable/bitstream')
         sys.exit(1)
     # best: most good captures, then lowest clip, then mid-range std
     def score(item):
@@ -104,8 +109,10 @@ def main():
     best = min(results.items(), key=score)[0]
     print(f'\n[+] USE GAIN: {best}')
     print(f'    python3 collect_dataset.py -n 3000 '
-          f'-o Dataset/main_live.h5 --gain {best} '
+          f'-o Dataset/main_live_g20.h5 --gain {best} '
           f'-b vivado_ascon/ascon_cw305_top.bit')
+    print('    Then tell the main machine: the gain used + the stored/clip/flat '
+          'counts from the run.')
 
 
 if __name__ == '__main__':

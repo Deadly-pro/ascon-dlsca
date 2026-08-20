@@ -410,9 +410,13 @@ def attack_column(prof, lq, col, args, rng, out_dir):
                     lq.scope.dis()
                     import chipwhisperer as cw
                     lq.scope = cw.scope()
-                    from scope_config import configure_scope
-                    lq.scope = configure_scope(gain=args.gain, samples=samples,
-                                               offset=args.offset, sample_rate=40e6)
+                    lq.scope.gain.db = args.gain
+                    lq.scope.adc.samples = samples
+                    lq.scope.adc.offset = args.offset
+                    lq.scope.clock.adc_src = 'clkgen_x4'
+                    lq.scope.clock.clkgen_freq = 40e6
+                    lq.scope.clock.reset_adc()
+                    lq.scope.trigger.triggers = 'tio4'
                     pool_fail_streak = 0
                 continue
             pool_fail_streak = 0
@@ -559,7 +563,7 @@ def main():
                     help='scope gain dB (must match the profiling capture)')
     ap.add_argument('--offset', type=int, default=700,
                     help='scope ADC offset (must match the profiling capture)')
-    ap.add_argument('--std-floor', type=float, default=0.001,
+    ap.add_argument('--std-floor', type=float, default=0.01,
                     help='reject flat live captures below this std')
     ap.add_argument('--clip-threshold', type=float, default=0.49,
                     help='reject live captures above this abs value (ADC rail)')

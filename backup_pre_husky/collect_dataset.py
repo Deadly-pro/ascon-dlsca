@@ -24,7 +24,7 @@ Confirmed settings:
 Quality filters (per trace, before storage):
     verify   : readback must match the ASCON oracle (unless --no-verify)
     clip     : reject if |trace|.max() > clip-threshold (0.49 V = ADC rail)
-    flat     : reject if trace.std() < std-floor (default 0.001 V = dead capture)
+    flat     : reject if trace.std() < std-floor (0.01 V = dead capture)
 
 Usage:
     python3 collect_dataset.py -n 1000 -o Dataset/run.h5
@@ -45,11 +45,8 @@ from cw305_ascon_shim import wrap
 
 def _drain(target, timeout=0.2):
     t0 = time.time()
-    try:
-        while not target.is_done() and time.time() - t0 < timeout:
-            time.sleep(0.001)
-    except AttributeError:
-        time.sleep(0.002)  # no is_done on raw target; core finishes in ~10 us
+    while not target.is_done() and time.time() - t0 < timeout:
+        time.sleep(0.001)
 
 
 def main():
@@ -71,7 +68,7 @@ def main():
                     help='ADC offset DAC value (raw int; shifts DC baseline down)')
     ap.add_argument('--clip-threshold', type=float, default=0.49,
                     help='reject traces with |trace|.max() above this (clipping)')
-    ap.add_argument('--std-floor', type=float, default=0.001,
+    ap.add_argument('--std-floor', type=float, default=0.01,
                     help='reject traces with std below this (dead/flat capture)')
     ap.add_argument('--no-program', action='store_true')
     args = ap.parse_args()
@@ -80,16 +77,30 @@ def main():
     if fixed_key is not None and len(fixed_key) != 16:
         sys.exit("key must be 16 bytes in hex")
 
-    from scope_config import connect_target
     print(f"[+] Connecting CW305 target ...")
-    t = connect_target(None if args.no_program else args.bitstream,
-                       program=not args.no_program)
-    target = t._t  # raw target for pll readback / drain
+    target = cw.target(None, cw.targets.CW305, force=True,
+                       bsfile=None if args.no_program else args.bitstream,
+                       fpga_id='100t', platform='cw305')
+    if not args.no_program:
+        target.vccint_set(1.0)
+        target.pll.pll_enable_set(True)
+        target.pll.pll_outenable_set(False, 0)
+        target.pll.pll_outenable_set(True, 1)
+        target.pll.pll_outenable_set(False, 2)
+        target.pll.pll_outfreq_set(10e6, 1)
+    target.clkusbautooff = True
+    target.clksleeptime = 1
+    target.fpga_write(0x00, [0x19])   # enable tio_clkout
+    t = wrap(target)
 
-    from scope_config import configure_scope, scope_model_name, firmware_note
-    scope = configure_scope(gain=args.gain, samples=args.samples,
-                            offset=args.offset, sample_rate=40e6)
-    print(f'[+] scope      : {scope_model_name(scope)}')
+    scope = cw.scope()
+    scope.gain.db = args.gain
+    scope.adc.samples = args.samples
+    scope.adc.offset = args.offset
+    scope.clock.adc_src = 'clkgen_x4'
+    scope.clock.clkgen_freq = 40e6
+    scope.clock.reset_adc()
+    scope.trigger.triggers = 'tio4'
 
     traces, keys, nonces, cts = [], [], [], []
     verify_fails = 0
@@ -97,7 +108,7 @@ def main():
     flats = 0
     key_mode = 'fixed' if fixed_key is not None else 'random'
     print(f"[+] collecting {args.num} traces ({key_mode} key, {args.samples} samples)")
-    print(f"[+] gain={args.gain} dB, verify={'ON' if not args.no_verify else 'off'}")
+    print(f"[+] gain={args.gain} dB, adc_src=clkgen_x4, verify={'ON' if not args.no_verify else 'off'}")
     crypto_freq = target.pll.pll_outfreq_get(1)
     print(f"[+] crypto clock = {crypto_freq/1e6:.1f} MHz (CDCE906 pllread)")
 
@@ -212,7 +223,7 @@ def main():
     print(f"[+] Saved {tr.shape[0]} verified traces -> {args.output} "
           f"(verify_err: {verify_fails}, clip: {clips}, flat: {flats})")
 
-    t.dis()
+    target.dis()
     scope.dis()
 
 

@@ -90,7 +90,7 @@ def main():
                     default=os.path.join(ROOT, 'vivado_ascon', 'ascon_cw305_top.bit'))
     ap.add_argument('--gain', type=int, default=-2)
     ap.add_argument('--offset', type=int, default=700)
-    ap.add_argument('--std-floor', type=float, default=0.001)
+    ap.add_argument('--std-floor', type=float, default=0.01)
     ap.add_argument('--sim', action='store_true',
                     help='use SimBoard instead of the board (testing only)')
     ap.add_argument('--sim-h5', default=os.path.join(ROOT, 'Dataset',

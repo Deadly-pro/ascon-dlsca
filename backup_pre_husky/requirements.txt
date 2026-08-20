@@ -1,0 +1,5 @@
+numpy
+h5py
+matplotlib
+scipy
+chipwhisperer==6.0.0
