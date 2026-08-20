@@ -6,9 +6,6 @@ the CW305 once, loads ONE fixed (unknown-to-the-selection-logic) key, then
 answers per-query: set nonce -> arm ADC -> go -> capture one trace -> read
 ciphertext/tag. No HDF5, no batch.
 
-Scope setup is delegated to scope_config.py, which auto-detects the capture
-hardware (CW-Husky vs CW-Lite/CW-Pro) and applies the correct clock settings.
-
 Alignment/normalization is NOT done here — adaptive.py preprocesses the trace
 against the profiling npz's stored reference so live traces see identical
 features to the training data.
@@ -29,13 +26,11 @@ import chipwhisperer as cw
 
 from ascon_ref import ascon_encrypt
 from cw305_ascon_shim import wrap
-from scope_config import (connect_target, configure_scope,
-                          setup_scope_clock, is_husky, scope_model_name)
 
 
 class LiveQuery:
     def __init__(self, bitstream, key, samples=2000, gain=-2, offset=700,
-                 std_floor=0.001, program=True):
+                 std_floor=0.01, program=True):
         assert len(key) == 16
         self.target = cw.target(None, cw.targets.CW305, force=True,
                                 bsfile=None if not program else bitstream,
@@ -53,8 +48,14 @@ class LiveQuery:
         self.t = wrap(self.target)
         self.t.loadEncryptionKey(key)
 
-        self.scope = configure_scope(gain=gain, samples=samples,
-                                     offset=offset, sample_rate=40e6)
+        self.scope = cw.scope()
+        self.scope.gain.db = gain
+        self.scope.adc.samples = samples
+        self.scope.adc.offset = offset
+        self.scope.clock.adc_src = 'clkgen_x4'
+        self.scope.clock.clkgen_freq = 40e6
+        self.scope.clock.reset_adc()
+        self.scope.trigger.triggers = 'tio4'
         self.std_floor = std_floor
 
     def query(self, nonce, _strikes=0):
@@ -129,12 +130,11 @@ def main():
     try:
         trace, ct = lq.query(nonce)
         if trace is None:
-            sys.exit('trigger timeout or flat capture')
+            sys.exit('trigger timeout')
         ok, exp, got = lq.verify_key(key, nonce)
-        print(f'scope      : {scope_model_name(lq.scope)}')
-        print(f'trace      : {len(trace)} samples, range '
+        print(f'trace: {len(trace)} samples, range '
               f'[{trace.min():.3f}, {trace.max():.3f}] V')
-        print(f'ct         : got={got} exp={exp} -> {"PASS" if ok else "FAIL"}')
+        print(f'ct: got={got} exp={exp} -> {"PASS" if ok else "FAIL"}')
     finally:
         lq.close()
 

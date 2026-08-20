@@ -43,20 +43,31 @@ def main():
                     default=os.path.join(here, 'vivado_ascon', 'ascon_cw305_top.bit'))
     args = ap.parse_args()
 
-    from scope_config import connect_target, configure_scope, scope_model_name
-
     print("[+] Opening CW305 target ...")
-    t = connect_target(args.bitstream)
+    target = cw.target(None, cw.targets.CW305, force=True,
+                       bsfile=args.bitstream, fpga_id='100t', platform='cw305')
+    target.vccint_set(1.0)
+    target.pll.pll_enable_set(True)
+    target.pll.pll_outenable_set(False, 0)
+    target.pll.pll_outenable_set(True, 1)
+    target.pll.pll_outenable_set(False, 2)
+    target.pll.pll_outfreq_set(10e6, 1)
+    target.clkusbautooff = True
+    target.clksleeptime = 1
+    t = wrap(target)
 
-    scope = configure_scope(gain=GAIN_CANDIDATES[0], samples=5000, offset=0,
-                            sample_rate=40e6)
-    print(f"[+] scope: {scope_model_name(scope)}")
+    scope = cw.scope()
+    scope.clock.adc_src = 'clkgen_x4'
+    scope.clock.clkgen_freq = 40e6
+    scope.clock.reset_adc()
+    scope.trigger.triggers = 'tio4'
+    scope.adc.offset = 0
 
     # ---- 3. CLOCK VERIFY first (cheap, no ADC needed) ----
     print("\n=== 3. PLL / crypto clock readback ===")
     try:
-        n, m, outdiv = t.pll.pllread(1)
-        freq = t.pll.pll_outfreq_get(1)
+        n, m, outdiv = target.pll.pllread(1)
+        freq = target.pll.pll_outfreq_get(1)
         print(f"  PLL1: N={n} M={m} outdiv={outdiv}  -> {freq/1e6:.3f} MHz "
               f"(configured 10 MHz)")
     except Exception as e:
@@ -98,26 +109,14 @@ def main():
         print("    Check the fixed stage or add external attenuation.")
         best_gain = GAIN_CANDIDATES[-1]
 
-    # ---- 2. ADC SYNC + buffer check ----
+    # ---- 2. ADC SYNC (extclk_x4) + buffer check ----
     print("\n=== 2. ADC sync: extclk_x4 (crypto-clock-locked) ===")
-    from scope_config import is_husky
-    if is_husky(scope):
-        # Husky: the external-clock-sync mode used on CW-Lite is not stable
-        # here; use the internal 40 MHz clock and software cross-correlation
-        # (preprocess.py handles alignment).
-        print("=== 2. ADC sync: internal 40 MHz clock (Husky) ===")
-        ok_samples = 2000
-        sample_list = [2000]
-    else:
-        print("=== 2. ADC sync: extclk_x4 (crypto-clock-locked) ===")
-        ok_samples = None
-        sample_list = (24000, 20000, 16000, 12000)
     scope.gain.db = best_gain
-    for samples in sample_list:
+    ok_samples = None
+    for samples in (24000, 20000, 16000, 12000):
         scope.adc.samples = samples
-        if not is_husky(scope):
-            scope.clock.adc_src = 'extclk_x4'
-            scope.clock.reset_adc()
+        scope.clock.adc_src = 'extclk_x4'
+        scope.clock.reset_adc()
         good = 0
         for i in range(3):
             key = os.urandom(16)
@@ -161,7 +160,7 @@ def main():
     print(f"    verify   = {'PASS' if got == exp else 'FAIL'}")
     print(f"    crypto   = {freq/1e6:.3f} MHz actual (pllread)")
 
-    t.dis()
+    target.dis()
     scope.dis()
 
 

@@ -207,7 +207,7 @@ def main():
     ap.add_argument('--sim-amp', type=float, default=1.0)
     ap.add_argument('--gain', type=int, default=-2)
     ap.add_argument('--offset', type=int, default=700)
-    ap.add_argument('--std-floor', type=float, default=0.001)
+    ap.add_argument('--std-floor', type=float, default=0.01)
     args = ap.parse_args()
 
     prof = KaddProfiles(args.models, args.npz)

@@ -48,12 +48,27 @@ def main():
     ap.add_argument('--out', default=None, help='optional h5 of the best setting')
     args = ap.parse_args()
 
-    from scope_config import connect_target, configure_scope, scope_model_name
+    import chipwhisperer as cw
+    from cw305_ascon_shim import wrap
 
-    t = connect_target(args.bitstream)
-    scope = configure_scope(gain=-2, samples=args.samples, offset=700,
-                            sample_rate=40e6)
-    print(f'[+] scope: {scope_model_name(scope)}')
+    target = cw.target(None, cw.targets.CW305, force=True,
+                       bsfile=args.bitstream, fpga_id='100t', platform='cw305')
+    target.vccint_set(1.0)
+    target.pll.pll_enable_set(True)
+    target.pll.pll_outenable_set(False, 0)
+    target.pll.pll_outenable_set(True, 1)
+    target.pll.pll_outenable_set(False, 2)
+    target.pll.pll_outfreq_set(10e6, 1)
+    target.clkusbautooff = True
+    target.clksleeptime = 1
+    target.fpga_write(0x00, [0x19])
+    t = wrap(target)
+
+    scope = cw.scope()
+    scope.adc.samples = args.samples
+    scope.clock.adc_src = 'clkgen_x4'
+    scope.clock.clkgen_freq = 40e6
+    scope.trigger.triggers = 'tio4'
 
     # (gain, offset) grid: gain = programmable + ~20 dB fixed external.
     # offsets 100/700/900 were the clean DC-centering windows found earlier.
