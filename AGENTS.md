@@ -20,8 +20,12 @@ python3.12 -m venv .venv && .venv/bin/pip install -r training/requirements.txt
 # Oracle self-test (no hardware)
 python3 verify_oracle.py
 
-# Board sanity check
+# Board sanity check (bitstream + KAT + one verified capture)
 python3 sanity_check.py -b vivado_ascon/ascon_cw305_top.bit
+.venv/bin/python check_setup.py -b vivado_ascon/ascon_cw305_top.bit
+
+# Pre-collection gain calibration (auto-detects Husky vs CW-Lite)
+python3 pick_gain.py -b vivado_ascon/ascon_cw305_top.bit
 
 # Pre-collection gain calibration
 python3 pilot_gain.py -b vivado_ascon/ascon_cw305_top.bit
@@ -70,6 +74,8 @@ bash build_bitstream.sh
 | Module | Role |
 |--------|------|
 | `ascon_ref.py` | NIST SP 800-232 ASCON-128 byte-exact reference oracle + `fpga_expected()` |
+| `scope_config.py` | Scope/target auto-detect (CW-Husky vs CW-Lite/Pro) + clock setup; single source of truth for capture hardware |
+| `check_setup.py` | One-shot bring-up check for new machines: library, scope, bitstream, register map, verified capture |
 | `cw305_ascon_shim.py` | Maps CW305 FPGA register API → masked-core register layout (`wrap(target)` → `AsconMux`) |
 | `sanity_check.py` | 5 KAT vectors, byte-exact FPGA vs oracle |
 | `pilot_gain.py` | Pre-collection hardware calibration: gain sweep, ADC sync, clock verify |
@@ -133,10 +139,19 @@ The S-box target is factorable per-column (2 bits → 4 hypotheses) but the mask
 
 ## Hardware Notes
 
+- **Husky**: the capture scope may be a CW-Husky (replaces CW-Lite). All scope
+  scripts call `setup_scope_clock()` from `live_query.py`, which uses
+  `clkgen_src='system'` + `adc_mul=1` on Husky (the legacy
+  `adc_src='clkgen_x4'` maps to `adc_mul=4` = 160 MS/s, breaking timing).
+  Husky gain range -15..+65 dB. Bring-up/runbook: `HUSKY_SETUP.md`.
+  Pre-Husky backup: `backup_pre_husky/`.
+- `training/active_loop.py`: unified closed loop — model picks each nonce
+  (posterior-aware separating selection), online-trains on the trace
+  (replay buffer), guesses the key; epoch ends on `--stable-n` repeats of the
+  same guess at posterior > `--converge-p` OR `--max-traces`. Random key per
+  epoch (oracle labels); `--attack-key` switches to real attack mode.
 - CW305 register map: KEY=0x0a, TEXTIN=0x06, NONCEIN=0x0d, CIPHEROUT=0x09, TAGOUT=0x0c, TEXTIN_BUF=0x12, VALID_AD=0x10, VALID_MSG=0x11
 - `REG_CLKSETTINGS=0x19` enables `tio_clkout` (needed for `extclk_x4` mode, set in `live_query.py`)
-- `clkusbautooff` behavior matters: `sanity_check.py` and `collect_dataset.py` set `False`; `live_query.py` sets `True` with `clksleeptime=1`
-- Known FPGA reprogramming issue: if the board isn't actually running our bitstream (stock AES register map visible), try slow-speed programming: `t.fpga.FPGAProgram(open(bit,'rb'), exceptOnDoneFailure=True, prog_speed=1E6)`
 
 ## SimBoard (`sim_board.py`)
 
@@ -148,13 +163,24 @@ Parameters: fitted from a real `.h5` capture (mean mu, per-sample leakage templa
 
 - `--self-test` verifies that amp=1 reproduces measured SNR within 2 dB
 - Targets both `sbox` and `kadd` (multi-byte alpha profiles)
+- **`target='sbox64'`** (added Aug 21): fits ALL 64 S-box columns, trace = Σ_c α_c·HW_c — the physically correct aggregate premise the parallel full-key attack relies on. The default `sbox` (single column) mode leaks only one column, which is unrealistically easy for per-column models (they read their column cleanly because the other 63 leak nothing). Single-column-sim success does NOT validate real-board behavior.
 - Internally aligns traces before fitting (matching the preprocessing pipeline)
 - Used by `adaptive.py --attack --sim` and `training/sim_sweep.py`
+
+## Parallel full-key attack (`training/adaptive_parallel.py`)
+
+Offline validation verdict (Aug 21): **the aggregate `sbox64` sim cannot validate full-key recovery with the per-column `cnn1` profiles.** Only the strongest model (col 0, 38.5% val acc) converges correctly; most columns converge to a confident WRONG hypothesis even in the sequential `adaptive.py --all-columns` path. The single-column sim is misleadingly easy. The documented real-board success (liveft board-finetuned profile, hyp 3, 32 queries) does not reproduce in sim — the sim's aggregate leakage template is not faithful enough at the per-column level, and the plain cnn1 profiles are too weak at this SNR (~14/64 columns leak below chance).
+
+Two real bugs were found and fixed along the way:
+1. `SimBoard(column=0)` leaked only column 0 — 63/64 columns scored pure noise in the parallel sim. Fixed with `target='sbox64'`.
+2. `adaptive_parallel.py` `pack_nonce` overwrites ALL 128 nonce bits (64 cols × 2 bits), fully replacing the random base — with a deterministic tiebreak every query was the SAME all-zero nonce (zero information diversity). Fixed with a uniform tiebreak over equal-separation (n0,n1) choices.
+
+The parallel attack is still unvalidated; the sim blocker is per-column model quality at this SNR, not the loop design.
 
 ## Gotchas
 
 ### Trigger race (every board interaction)
-~50% of captures come back flat. `scope.capture()` return flag is **unreliable**. Must judge by `trace.std() < std_floor` (typically 0.01V) and retry. `collect_dataset.py` uses `_drain(target)` between retries — missing this causes consecutive flat captures. `live_query.LiveQuery.query()` returns `(None, None)` on flat/std-fail; caller must retry.
+~50% of captures come back flat. `scope.capture()` return flag is **unreliable**. Must judge by `trace.std() < std_floor` (0.001 V on Husky) and retry. `collect_dataset.py` uses `_drain(target)` between retries — missing this causes consecutive flat captures. `live_query.LiveQuery.query()` returns `(None, None)` on flat/std-fail; caller must retry.
 
 ### Preprocessing order is locked and non-negotiable
 `training/preprocess.py`: **align full trace → z-score full trace → crop to window**. Any deviation breaks feature distribution matching between profiling and live traces. `adaptive.py` and `live_finetune.py` must reproduce this exact order using the stored `ref` (alignment reference) and `mu`/`sigma` (z-score params) from the profiling `.npz`.
@@ -188,7 +214,7 @@ Not all HW classes appear equally across random keys/nonces. The loss function i
 `sim_board.py` adds `training/` to `sys.path` to import `labels`. This means it must be run from the repo root. Same pattern in `training/labels.py` for its self-test import of `ascon_ref`.
 
 ### Dataset quality gates
-`collect_dataset.py` uses two filters: `--clip-threshold` (max absolute sample, default 0.49V — ADC rails at ±0.5V) and `--std-floor` (trace std, default 0.01V). Recommended gain settings produce no clipping and no flat traces. `main2.h5` (gain −5 dB, 0% clip, 0% flat) is the reference quality.
+`collect_dataset.py` uses two filters: `--clip-threshold` (max absolute sample, default 0.49V — ADC rails at ±0.5V) and `--std-floor` (trace std, default 0.001 V). Recommended gain settings produce no clipping and no flat traces. `main2.h5` (gain −5 dB, 0% clip, 0% flat) is the reference quality.
 
 ### Verification is full-key only
 A single column's 2 recovered key bits cannot be verified against ciphertext. All 64 columns must be assembled first, then `LiveQuery.verify_key(candidate_key)` re-encrypts a fresh query. This is the contract for `adaptive.py`: accumulate all 128 bits, then verify.
