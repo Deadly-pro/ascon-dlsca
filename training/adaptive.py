@@ -364,7 +364,8 @@ def make_lq(args, col, key):
     if args.sim:
         from sim_board import SimBoard
         return SimBoard(args.sim_h5, key, column=col, amp=args.sim_amp,
-                        seed=args.seed, flat_p=args.sim_flat)
+                        seed=args.seed, flat_p=args.sim_flat,
+                        target=getattr(args, 'sim_target', 'sbox'))
     import live_query
     return live_query.LiveQuery(args.bitstream, key, gain=args.gain,
                                 offset=args.offset, std_floor=args.std_floor)
@@ -572,6 +573,9 @@ def main():
                     help='leakage gain for the virtual board (1.0 = real SNR)')
     ap.add_argument('--sim-flat', type=float, default=0.0,
                     help='probability the virtual board returns a flat (trigger-race) capture')
+    ap.add_argument('--sim-target', default='sbox',
+                    help='SimBoard leakage target: sbox (single column, '
+                         'default) or sbox64 (all 64 columns aggregate)')
     ap.add_argument('--M', type=int, default=1,
                     help='traces per query, averaged (nonce repetition: '
                          '+10*log10(M) dB SNR)')

@@ -41,6 +41,8 @@ def _fit_from_h5(path, column, k=300, target='sbox'):
     """Measure mu, alpha, sigma, drift distribution, jitter, lag-5 color.
 
     target='sbox' fits the round-1 S-box column leak (single alpha profile);
+    target='sbox64' fits ALL 64 S-box columns (trace = sum_c alpha_c * HW_c,
+    the physical aggregate premise the parallel attack relies on);
     target='kadd' fits the 8-byte KADD leak (one alpha profile per byte).
     """
     with h5py.File(path, 'r') as f:
@@ -70,6 +72,19 @@ def _fit_from_h5(path, column, k=300, target='sbox'):
             alphas[b] = (aligned.T @ hwc) / (hwc @ hwc) if (hwc @ hwc) > 0 \
                 else np.zeros(T)
             resid -= alphas[b][None, :] * hwc[:, None]
+        sigma = resid.std(axis=0)
+        mean_hw = hw.mean(axis=0)
+        alpha = alphas
+    elif target == 'sbox64':
+        hw = lab.round1_sbox_hw(keys, nonces).astype(np.float64)  # (N,64)
+        alphas = np.empty((64, T))
+        resid = aligned.copy()
+        for c in range(64):
+            hwc = hw[:, c] - hw[:, c].mean()
+            denom = hwc @ hwc
+            alphas[c] = (aligned.T @ hwc) / denom if denom > 0 \
+                else np.zeros(T)
+            resid -= alphas[c][None, :] * hwc[:, None]
         sigma = resid.std(axis=0)
         mean_hw = hw.mean(axis=0)
         alpha = alphas
@@ -138,6 +153,11 @@ class SimBoard:
             leak = np.zeros_like(self.mu)
             for b in range(8):
                 leak += self.amp * self.alpha[b] * (hw[b] - self.mean_hw[b])
+        elif self.target == 'sbox64':
+            hw = lab.round1_sbox_hw(kb, nb)[0].astype(np.float64)     # (64,)
+            leak = np.zeros_like(self.mu)
+            for c in range(64):
+                leak += self.amp * self.alpha[c] * (hw[c] - self.mean_hw[c])
         else:
             hw = lab.round1_sbox_hw(kb, nb)[0, self.column]
             leak = self.amp * self.alpha * (int(hw) - self.mean_hw)
