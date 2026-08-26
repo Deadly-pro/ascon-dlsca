@@ -65,14 +65,34 @@ orchestrator `board_session/run_session.sh` runs all of it, logs to
 ## Run It
 
 ```bash
-# one shot, everything (recommended)
+# one shot, everything (recommended) — Linux
 bash board_session/run_session.sh
 
-# or manually, phase by phase (see run_session.sh for exact args)
+# Windows endpoint (board on a Windows PC, via AnyDesk):
+#   double-click  board_session\run_session.bat
+#   or from repo root in cmd.exe:  board_session\run_session.bat
+
+# or manually, phase by phase (see run_session.py for exact args)
 .venv/bin/python verify_state.py -b vivado_ascon/ascon_cw305_top.bit
 ```
 
-## Reading the Results
+The orchestrator (`board_session/run_session.py`) is cross-platform; the `.bat`
+and `.sh` are thin wrappers around it. It logs every phase to
+`board_session/run_<ts>/session.log` and writes a `verdict.txt`.
+
+### Windows endpoint setup (once)
+
+```bat
+REM in the repo directory on the Windows PC (board connected via USB):
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+REM chipwhisperer USB driver must be bound via Zadig (WinUSB) to the CW305
+REM USB endpoints, same as a normal ChipWhisperer install.
+```
+
+Paths inside the scripts are `os.path.join`-based, so they work on both
+platforms; only the `.venv\Scripts\python.exe` vs `.venv/bin/python` launcher
+differs, and the wrapper handles that.
 
 - **edge(gain) at M=1**: `> 0.05` is a strong leak, `0.02-0.05` weak but real,
   `< 0.02` effectively no first-order S-box signal.
