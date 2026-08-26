@@ -34,8 +34,12 @@ from scope_config import (connect_target, configure_scope,
 
 
 class LiveQuery:
-    def __init__(self, bitstream, key, samples=2000, gain=-2, offset=700,
-                 std_floor=0.001, program=True):
+    # NOTE (Aug 24): defaults retuned for the NEW unmasked rprimas core —
+    # crypto completes in ~50-90 cycles (~5-9 us) vs ~3 ms for the old serial
+    # masked core. At 40 MS/s that is ~200-360 samples starting AT the
+    # trigger, so offset must be small.
+    def __init__(self, bitstream, key, samples=1200, gain=-2, offset=0,
+                 std_floor=0.001, program=True, extclk=False, crypto_mhz=10.0):
         assert len(key) == 16
         self.target = cw.target(None, cw.targets.CW305, force=True,
                                 bsfile=None if not program else bitstream,
@@ -46,16 +50,24 @@ class LiveQuery:
             self.target.pll.pll_outenable_set(False, 0)
             self.target.pll.pll_outenable_set(True, 1)
             self.target.pll.pll_outenable_set(False, 2)
-            self.target.pll.pll_outfreq_set(10e6, 1)
+            self.target.pll.pll_outfreq_set(float(crypto_mhz) * 1e6, 1)
         self.target.clkusbautooff = True
         self.target.clksleeptime = 1
         self.target.fpga_write(0x00, [0x19])   # enable tio_clkout
         self.t = wrap(self.target)
-        self.t.loadEncryptionKey(key)
+        self.key = bytes(key)
+        self.t.loadEncryptionKey(self.key)
 
-        self.scope = configure_scope(gain=gain, samples=samples,
+        self.scope = configure_scope(gain=gain, samples=samples, extclk=extclk,
                                      offset=offset, sample_rate=40e6)
         self.std_floor = std_floor
+
+    def set_key(self, key):
+        """Rotate the FPGA key in place (no re-program, no scope re-init).
+        Used by the live training loop to serve a fresh key per episode."""
+        assert len(key) == 16
+        self.key = bytes(key)
+        self.t.loadEncryptionKey(self.key)
 
     def query(self, nonce, _strikes=0):
         """One adaptive query: (nonce 16 bytes) -> (trace, ciphertext+tag).

@@ -74,6 +74,8 @@ def main():
     ap.add_argument('--std-floor', type=float, default=0.001,
                     help='reject traces with std below this (dead/flat capture)')
     ap.add_argument('--no-program', action='store_true')
+    ap.add_argument('--crypto-mhz', type=float, default=10.0,
+                    help='crypto clock MHz (PLL1)')
     args = ap.parse_args()
 
     fixed_key = None if args.key is None else bytes.fromhex(args.key)
@@ -83,6 +85,7 @@ def main():
     from scope_config import connect_target
     print(f"[+] Connecting CW305 target ...")
     t = connect_target(None if args.no_program else args.bitstream,
+                       crypto_hz=args.crypto_mhz * 1e6,
                        program=not args.no_program)
     target = t._t  # raw target for pll readback / drain
 

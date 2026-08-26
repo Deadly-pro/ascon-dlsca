@@ -38,9 +38,10 @@ DEFAULT_SAMPLE_RATE = 40e6       # Hz
 DEFAULT_SAMPLES = 2000           # 0-50 us at 40 MHz
 DEFAULT_GAIN = 20                # dB (CW305 +20 dB fixed stage assumed)
 
-# Husky gain range is -15..+65 dB; CW-Lite is -6.5..+56 dB.
+# Husky gain range is -15..+65 dB (rated); allow up to +90 for probing
+# driver behavior beyond the rated maximum.
 HUSKY_GAIN_MIN = -15.0
-HUSKY_GAIN_MAX = 65.0
+HUSKY_GAIN_MAX = 90.0
 LITE_GAIN_MIN = -6.5
 LITE_GAIN_MAX = 56.0
 
@@ -59,16 +60,27 @@ def scope_model_name(scope):
     return 'CW-Lite/CW-Pro'
 
 
-def setup_scope_clock(scope, rate=DEFAULT_SAMPLE_RATE):
+def setup_scope_clock(scope, rate=DEFAULT_SAMPLE_RATE, extclk=False):
     """Point the ADC clock at `rate` Hz, correcting for the scope model.
 
     On a Husky the old adc_src string maps to adc_mul as a side effect; we set
     the fields explicitly so the real sample rate equals the requested one.
+
+    extclk=True (Husky only): lock the ADC PLL onto the target's tio_clkout
+    (the crypto clock) instead of the scope's own system PLL — phase-coherent
+    captures, eliminates per-capture sampling-phase drift. `rate` must be an
+    integer multiple of the crypto clock (10 MHz default -> adc_mul = rate/10e6).
     """
     if is_husky(scope):
-        scope.clock.clkgen_src = 'system'
-        scope.clock.adc_mul = 1
-        scope.clock.clkgen_freq = rate
+        if extclk:
+            crypto_hz = 10e6
+            scope.clock.clkgen_src = 'extclk'
+            scope.clock.clkgen_freq = crypto_hz
+            scope.clock.adc_mul = int(round(rate / crypto_hz))
+        else:
+            scope.clock.clkgen_src = 'system'
+            scope.clock.adc_mul = 1
+            scope.clock.clkgen_freq = rate
     else:
         scope.clock.adc_src = 'clkgen_x4'
         scope.clock.clkgen_freq = rate
@@ -107,7 +119,7 @@ def connect_target(bitstream, crypto_hz=10e6, program=True):
 
 def configure_scope(gain=DEFAULT_GAIN, samples=DEFAULT_SAMPLES,
                     offset=700, sample_rate=DEFAULT_SAMPLE_RATE,
-                    disable_glitch=True):
+                    disable_glitch=True, extclk=False):
     """Open the scope and apply the standard capture settings.
 
     Returns the raw scope object. Raises RuntimeError if hardware is missing.
@@ -128,7 +140,7 @@ def configure_scope(gain=DEFAULT_GAIN, samples=DEFAULT_SAMPLES,
     scope.gain.db = gain
     scope.adc.samples = samples
     scope.adc.offset = offset
-    setup_scope_clock(scope, sample_rate)
+    setup_scope_clock(scope, sample_rate, extclk=extclk)
     scope.trigger.triggers = 'tio4'
     return scope
 
