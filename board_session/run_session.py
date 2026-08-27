@@ -76,12 +76,14 @@ def edge_of(text):
     return float(m.group(1)) if m else -1.0
 
 
-def collect(n, gain, out, crypto_mhz=10.0, program=True):
+def collect(n, gain, out, crypto_mhz=10.0, program=True, extclk=False):
     cmd = ['collect_dataset.py', '-b', BIT]
     if not program:
         cmd.append('--no-program')
     cmd += ['-n', str(n), '--samples', '1200', '--crypto-mhz', str(crypto_mhz),
             '-o', out, '--gain', str(gain), '--max-retry', '10']
+    if extclk:
+        cmd += ['--extclk']
     return run(cmd)
 
 
@@ -104,83 +106,89 @@ def main():
         return 1
     log('gate passed')
 
-    # ---- Phase 1: gain sweep ----
-    step('PHASE 1: gain sweep (30 35 40 45 50), template edge at M=1')
+    # ---- Phase 1: config hunt — gain × clock × phase-lock (10 min) ----
+    # New fast core's S-box leak lives in ~5 samples; free-running ADC jitter
+    # smears it to zero. extclk (ADC locked to crypto clock) is the fix.
+    step('PHASE 1: config hunt — (gain, mhz, extclk) edge at M=1')
+    configs = [(35, 10, True), (30, 10, True), (35, 5, True),
+               (35, 10, False), (30, 10, False)]
     best_gain, best_edge = 35, -1.0
-    gain_files = {}
-    for g in (30, 35, 40, 45, 50):
-        h5 = os.path.join(OUT, 'gain_%d.h5' % g)
-        rc, _ = collect(300, g, h5, program=False)
+    best_cfg = (35, 10, False)
+    crypto_mhz = 10.0
+    for g, mhz, ext in configs:
+        tag = 'extclk' if ext else 'clkgen'
+        h5 = os.path.join(OUT, 'cfg_g%d_%dmhz_%s.h5' % (g, mhz, tag))
+        rc, _ = collect(500, g, h5, crypto_mhz=mhz, extclk=ext,
+                        program=(mhz != 10.0 or ext))
         if rc != 0:
-            log('  !! collect failed at gain %d' % g)
+            log('  !! collect failed g%d %dmhz %s' % (g, mhz, tag))
             continue
         rc, etext = run(['training/template_edge.py', '--h5', h5,
-                         '--n', '300', '--fit-k', '200'])
+                         '--n', '500', '--fit-k', '350'])
         e = edge_of(etext)
-        gain_files[g] = h5
-        log('  => gain %d edge = %+.4f nats' % (g, e))
+        log('  => g%d %dMHz %s edge = %+.4f nats' % (g, mhz, tag, e))
         if e > best_edge:
-            best_gain, best_edge = g, e
-    log('[[ BEST: gain=%d edge=%+.4f ]]' % (best_gain, best_edge))
+            best_gain, best_edge, best_cfg = g, e, (g, mhz, ext)
+            crypto_mhz = float(mhz)
+    g, mhz, ext = best_cfg
+    log('[[ BEST: gain=%d %.0fMHz %s edge=%+.4f ]]'
+        % (g, mhz, 'extclk' if ext else 'clkgen', best_edge))
 
-    crypto_mhz = 10.0
-    profile_h5 = os.path.join(OUT, 'gain_%d.h5' % best_gain)
-
-    # ---- Phase 1b: 5 MHz contingency ----
+    # ---- Decision: no leak anywhere -> negative verdict ----
     if best_edge < 0.02:
-        step('PHASE 1b: 5 MHz contingency at gain %d' % best_gain)
-        h5 = os.path.join(OUT, 'gain_%d_5mhz.h5' % best_gain)
-        rc, _ = collect(300, best_gain, h5, crypto_mhz=5, program=True)
-        rc, etext = run(['training/template_edge.py', '--h5', h5,
-                         '--n', '300', '--fit-k', '200'])
-        e5 = edge_of(etext)
-        log('  => 5 MHz edge = %+.4f nats' % e5)
-        if e5 < 0.02:
-            verdict('no_leak: edge < 0.02 at all gains AND both clocks '
-                    '(gain=%d edge_10mhz=%+.4f edge_5mhz=%+.4f)'
-                    % (best_gain, best_edge, e5))
-            log('  Bitstream not leaking first-order S-box signal. '
-                'Check verify_state, trigger timing, RTL/masking.')
-            return 0
-        best_edge, crypto_mhz = e5, 5.0
-        profile_h5 = h5
-        log('[[ 5 MHz: edge=%+.4f — proceeding ]]' % best_edge)
+        verdict('no_leak: edge < 0.02 across gain/clock/phase-lock grid '
+                'best=%d %.0fMHz edge=%+.4f' % (best_gain, crypto_mhz,
+                                                best_edge))
+        log('  New rprimas core: no measurable first-order S-box leak at any '
+            'capture config. Not an attack problem — RTL/SNR floor.')
+        return 0
+
+    g, mhz, ext = best_cfg
+    profile_h5 = os.path.join(OUT, 'cfg_g%d_%dmhz_%s.h5'
+                              % (g, mhz, 'extclk' if ext else 'clkgen'))
 
     # ---- Phase 2: edge vs M ----
-    step('PHASE 2: edge vs M-averaging (gain %d, %.0f MHz)'
-         % (best_gain, crypto_mhz))
+    step('PHASE 2: edge vs M-averaging (gain %d, %.0f MHz, %s)'
+         % (best_gain, crypto_mhz, 'extclk' if ext else 'clkgen'))
     out = os.path.join(OUT, 'edge_vs_m.h5')
-    run(['training/edge_vs_m.py', '--profile-h5', profile_h5,
-         '--gain', str(best_gain), '--samples', '1200',
-         '--M-max', '64', '--nonces', '30',
-         '--crypto-mhz', str(crypto_mhz), '--out', out], timeout=2400)
+    cmd = ['training/edge_vs_m.py', '--profile-h5', profile_h5,
+           '--gain', str(best_gain), '--samples', '1200',
+           '--M-max', '64', '--nonces', '30',
+           '--crypto-mhz', str(crypto_mhz), '--out', out]
+    if ext:
+        cmd.append('--extclk')
+    run(cmd, timeout=2400)
 
     # ---- Phase 3: profiling set ----
-    step('PHASE 3: profiling set (5000 traces, gain %d, %.0f MHz)'
-         % (best_gain, crypto_mhz))
+    step('PHASE 3: profiling set (5000 traces, gain %d, %.0f MHz, %s)'
+         % (best_gain, crypto_mhz, 'extclk' if ext else 'clkgen'))
     prof = os.path.join(OUT, 'profiling.h5')
-    collect(5000, best_gain, prof, crypto_mhz=crypto_mhz,
-            program=(crypto_mhz != 10.0))
+    collect(5000, best_gain, prof, crypto_mhz=crypto_mhz, extclk=ext,
+            program=True)
 
     # ---- Phase 4: template attack ----
     step('PHASE 4: template attack (M=64, 120 queries, 2 episodes)')
     attack = os.path.join(OUT, 'attack_session.h5')
-    run(['training/live_loop_transformer.py', '--evidence', 'template',
-         '--profile-h5', prof, '--integrator', 'naive', '--M', '64',
-         '--retries', '128', '--gain', str(best_gain),
-         '--episodes', '2', '--max-queries', '120',
-         '--crypto-mhz', str(crypto_mhz), '--save-h5', attack],
-        timeout=1800)
+    cmd = ['training/live_loop_transformer.py', '--evidence', 'template',
+           '--profile-h5', prof, '--integrator', 'naive', '--M', '64',
+           '--retries', '128', '--gain', str(best_gain),
+           '--episodes', '2', '--max-queries', '120',
+           '--crypto-mhz', str(crypto_mhz), '--save-h5', attack]
+    if ext:
+        cmd.append('--extclk')
+    run(cmd, timeout=1800)
 
     # ---- Summary ----
     step('SESSION SUMMARY')
-    log('  best gain:  %d' % best_gain)
-    log('  crypto:     %.0f MHz' % crypto_mhz)
-    log('  edge M=1:   %+.4f nats' % best_edge)
-    log('  log:        %s' % LOG_PATH)
-    log('  outputs:    %s' % OUT)
-    verdict('complete gain=%d crypto=%.0fMHz edge=%+.4f'
-            % (best_gain, crypto_mhz, best_edge))
+    log('  best gain:   %d' % best_gain)
+    log('  crypto:      %.0f MHz' % crypto_mhz)
+    log('  phase lock:  %s' % ('extclk' if ext else 'clkgen'))
+    log('  edge M=1:    %+.4f nats' % best_edge)
+    log('  log:         %s' % LOG_PATH)
+    log('  outputs:     %s' % OUT)
+    verdict('complete gain=%d crypto=%.0fMHz phase=%s edge=%+.4f'
+            % (best_gain, crypto_mhz, 'extclk' if ext else 'clkgen',
+               best_edge))
     return 0
 
 

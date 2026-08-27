@@ -466,6 +466,8 @@ def main():
                                          'ascon_cw305_top.bit'))
     ap.add_argument('--crypto-mhz', type=float, default=10.0,
                     help='crypto clock MHz (PLL1); lower = more samples/cycle')
+    ap.add_argument('--extclk', action='store_true',
+                    help='lock ADC to crypto clock (phase-coherent)')
     args = ap.parse_args()
 
     device = args.device or ('cuda' if torch.cuda.is_available() else 'cpu')
@@ -491,7 +493,8 @@ def main():
     if not args.sim:
         import live_query
         lq = live_query.LiveQuery(args.bitstream, os.urandom(16),
-                                  gain=args.gain, crypto_mhz=args.crypto_mhz)
+                                  gain=args.gain, crypto_mhz=args.crypto_mhz,
+                                  extclk=args.extclk)
 
     # ---- session dataset recording (crash-safe: written per query) ----
     h5 = None

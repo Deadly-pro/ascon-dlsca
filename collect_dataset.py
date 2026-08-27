@@ -76,6 +76,8 @@ def main():
     ap.add_argument('--no-program', action='store_true')
     ap.add_argument('--crypto-mhz', type=float, default=10.0,
                     help='crypto clock MHz (PLL1)')
+    ap.add_argument('--extclk', action='store_true',
+                    help='lock ADC to crypto clock (phase-coherent, Husky only)')
     args = ap.parse_args()
 
     fixed_key = None if args.key is None else bytes.fromhex(args.key)
@@ -91,7 +93,8 @@ def main():
 
     from scope_config import configure_scope, scope_model_name, firmware_note
     scope = configure_scope(gain=args.gain, samples=args.samples,
-                            offset=args.offset, sample_rate=40e6)
+                            offset=args.offset, sample_rate=40e6,
+                            extclk=args.extclk)
     print(f'[+] scope      : {scope_model_name(scope)}')
 
     traces, keys, nonces, cts = [], [], [], []

@@ -52,6 +52,8 @@ def main():
                     help='consecutive flat traces tolerated before skip')
     ap.add_argument('--fit-k', type=int, default=300)
     ap.add_argument('--crypto-mhz', type=float, default=10.0)
+    ap.add_argument('--extclk', action='store_true',
+                    help='lock ADC to crypto clock (phase-coherent, kills jitter smear)')
     ap.add_argument('--sim', action='store_true',
                     help='use SimBoard (smoke test only, NOT a validation)')
     ap.add_argument('--out', default=None, help='raw capture h5')
@@ -70,9 +72,11 @@ def main():
     else:
         import live_query
         lq = live_query.LiveQuery(args.bitstream, key, samples=args.samples,
-                                  gain=args.gain, crypto_mhz=args.crypto_mhz)
+                                  gain=args.gain, crypto_mhz=args.crypto_mhz,
+                                  extclk=args.extclk)
         print(f'[+] live: gain {args.gain}, crypto {args.crypto_mhz} MHz, '
-              f'samples {args.samples}, key {key.hex()[:8]}…')
+              f'samples {args.samples}, extclk={args.extclk}, '
+              f'key {key.hex()[:8]}…')
 
     # ---- capture M_max traces per nonce (retry-fixed flat handling) ----
     rng = np.random.default_rng(0)
