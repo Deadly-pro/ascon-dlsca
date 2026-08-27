@@ -94,7 +94,8 @@ def main():
     from scope_config import configure_scope, scope_model_name, firmware_note
     scope = configure_scope(gain=args.gain, samples=args.samples,
                             offset=args.offset, sample_rate=40e6,
-                            extclk=args.extclk)
+                            extclk=args.extclk,
+                            crypto_hz=args.crypto_mhz*1e6)
     print(f'[+] scope      : {scope_model_name(scope)}')
 
     traces, keys, nonces, cts = [], [], [], []

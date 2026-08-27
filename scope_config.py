@@ -60,23 +60,26 @@ def scope_model_name(scope):
     return 'CW-Lite/CW-Pro'
 
 
-def setup_scope_clock(scope, rate=DEFAULT_SAMPLE_RATE, extclk=False):
+def setup_scope_clock(scope, rate=DEFAULT_SAMPLE_RATE, extclk=False,
+                      crypto_hz=10e6):
     """Point the ADC clock at `rate` Hz, correcting for the scope model.
 
     On a Husky the old adc_src string maps to adc_mul as a side effect; we set
     the fields explicitly so the real sample rate equals the requested one.
 
     extclk=True (Husky only): lock the ADC PLL onto the target's tio_clkout
-    (the crypto clock) instead of the scope's own system PLL — phase-coherent
-    captures, eliminates per-capture sampling-phase drift. `rate` must be an
-    integer multiple of the crypto clock (10 MHz default -> adc_mul = rate/10e6).
+    (the crypto clock, `crypto_hz` Hz) instead of the scope's own system PLL —
+    phase-coherent captures, eliminates per-capture sampling-phase drift.
+    `rate` must be an integer multiple of `crypto_hz`; adc_mul = rate/crypto_hz.
+    The crypto clock must be present and stable on the HS1 pin BEFORE this runs
+    (set the target PLL first). Changing the crypto clock afterwards requires
+    re-setting clkgen_src='extclk' (the driver caches the measured frequency).
     """
     if is_husky(scope):
         if extclk:
-            crypto_hz = 10e6
             scope.clock.clkgen_src = 'extclk'
-            scope.clock.clkgen_freq = crypto_hz
-            scope.clock.adc_mul = int(round(rate / crypto_hz))
+            scope.clock.clkgen_freq = float(crypto_hz)
+            scope.clock.adc_mul = int(round(rate / float(crypto_hz)))
         else:
             scope.clock.clkgen_src = 'system'
             scope.clock.adc_mul = 1
@@ -119,7 +122,7 @@ def connect_target(bitstream, crypto_hz=10e6, program=True):
 
 def configure_scope(gain=DEFAULT_GAIN, samples=DEFAULT_SAMPLES,
                     offset=700, sample_rate=DEFAULT_SAMPLE_RATE,
-                    disable_glitch=True, extclk=False):
+                    disable_glitch=True, extclk=False, crypto_hz=10e6):
     """Open the scope and apply the standard capture settings.
 
     Returns the raw scope object. Raises RuntimeError if hardware is missing.
@@ -140,7 +143,7 @@ def configure_scope(gain=DEFAULT_GAIN, samples=DEFAULT_SAMPLES,
     scope.gain.db = gain
     scope.adc.samples = samples
     scope.adc.offset = offset
-    setup_scope_clock(scope, sample_rate, extclk=extclk)
+    setup_scope_clock(scope, sample_rate, extclk=extclk, crypto_hz=crypto_hz)
     scope.trigger.triggers = 'tio4'
     return scope
 

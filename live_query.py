@@ -59,7 +59,8 @@ class LiveQuery:
         self.t.loadEncryptionKey(self.key)
 
         self.scope = configure_scope(gain=gain, samples=samples, extclk=extclk,
-                                     offset=offset, sample_rate=40e6)
+                                     offset=offset, sample_rate=40e6,
+                                     crypto_hz=crypto_mhz*1e6)
         self.std_floor = std_floor
 
     def set_key(self, key):
