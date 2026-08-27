@@ -1,0 +1,1 @@
+complete gain=30 crypto=10MHz edge=+0.0363
