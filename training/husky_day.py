@@ -128,12 +128,13 @@ def main():
         if not os.path.exists(model):
             sys.exit(f'{model} not found — run train first')
         cmd = [
-            py, os.path.join(ROOT, 'training', 'adaptive_parallel.py'),
+            py, os.path.join(ROOT, 'training', 'adaptive.py'),
             '--npz', npz,
-            '--joint-model', model,
+            '--model', model,
             '--key', args.key,
             '--max-queries', str(args.max_queries),
             '--M', str(args.M),
+            '--all-columns',
         ]
         if args.sim:
             cmd += ['--sim', '--sim-amp', str(args.sim_amp)]

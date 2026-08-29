@@ -4,10 +4,10 @@ Deep-learning side-channel analysis of a masked (d=1, 2-share) ASCON-128 hardwar
 
 ## Project
 
-- **Target**: NewAE CW305 (Artix-7 XC7A100T-FTG256) running `compact-yet-fast-ascon` threshold-implemented ASCON-128
+- **Target**: NewAE CW305 (Artix-7 XC7A100T-FTG256) running the **unmasked** `rprimas/ascon-verilog` Ascon-AEAD128 core (V4: 64-bit bus, 1 round/cycle, CC0) since Aug 24 — replaces the masked `compact-yet-fast-ascon` core (archived in `legacy/vivado_rtl_masked/`)
 - **Scope**: ChipWhisperer-Lite, 40 MS/s, `clkgen_x4`, trigger on `tio4`, crypto clock 10 MHz on PLL1
 - **Stack**: Python 3 (3.12 for training venv) · `chipwhisperer==6.0.0` · numpy/h5py/matplotlib/scipy · torch (CPU) + scikit-learn for training
-- **RTL**: SystemVerilog (`vivado_ascon/rtl/`) + Verilog wrappers (`vivado_ascon/fpga/`) · Vivado 2026.1
+- **RTL**: SystemVerilog (`vivado_ascon/rtl/`: rprimas core + `ascon_top.sv` adapter) + Verilog wrappers (`vivado_ascon/fpga/`) · Vivado 2026.1 · upstream copy in `vivado_ascon/rtl_ref/`
 - **Entry**: `sanity_check.py` (board-level KAT), `collect_dataset.py` (capture), `live_query.py` (single-trace adaptive), `sim_board.py` (virtual board), `training/` (DL pipeline)
 
 ## Commands
@@ -22,25 +22,16 @@ python3 verify_oracle.py
 
 # Board sanity check (bitstream + KAT + one verified capture)
 python3 sanity_check.py -b vivado_ascon/ascon_cw305_top.bit
-.venv/bin/python check_setup.py -b vivado_ascon/ascon_cw305_top.bit
 
 # Pre-collection gain calibration (auto-detects Husky vs CW-Lite)
 python3 pick_gain.py -b vivado_ascon/ascon_cw305_top.bit
 
-# Pre-collection gain calibration
-python3 pilot_gain.py -b vivado_ascon/ascon_cw305_top.bit
-
 # Collect dataset
 python3 collect_dataset.py -n 1000 -o Dataset/run.h5
 
-# Dataset overview (compare all .h5 files)
+# Dataset overview + EDA report
 .venv/bin/python training/overview.py
-
-# EDA report
 .venv/bin/python training/eda.py Dataset/main2.h5
-
-# Analyze
-python3 view_dataset.py Dataset/demo.h5 --outdir results/
 
 # Training pipeline
 .venv/bin/python training/preprocess.py Dataset/main2.h5
@@ -56,8 +47,6 @@ python3 view_dataset.py Dataset/demo.h5 --outdir results/
 # Virtual board self-test (fit from capture, verify SNR match)
 .venv/bin/python sim_board.py Dataset/main_unmasked_merged.h5 --column 0
 
-# SNR threshold sweep (sim)
-.venv/bin/python training/sim_sweep.py --amps 1 2 4 8 16 --ntrain 3000
 
 # Live on-board fine-tuning
 .venv/bin/python training/live_finetune.py --model ... --npz ... --key <hex> --column 0 --ntrain 300
@@ -75,21 +64,20 @@ bash build_bitstream.sh
 |--------|------|
 | `ascon_ref.py` | NIST SP 800-232 ASCON-128 byte-exact reference oracle + `fpga_expected()` |
 | `scope_config.py` | Scope/target auto-detect (CW-Husky vs CW-Lite/Pro) + clock setup; single source of truth for capture hardware |
-| `check_setup.py` | One-shot bring-up check for new machines: library, scope, bitstream, register map, verified capture |
 | `cw305_ascon_shim.py` | Maps CW305 FPGA register API → masked-core register layout (`wrap(target)` → `AsconMux`) |
 | `sanity_check.py` | 5 KAT vectors, byte-exact FPGA vs oracle |
-| `pilot_gain.py` | Pre-collection hardware calibration: gain sweep, ADC sync, clock verify |
 | `collect_dataset.py` | Synchronized capture with per-trace oracle verification + clip/flat filters → HDF5 |
 | `live_query.py` | `LiveQuery` class: one fixed-key, per-query capture (used by ACPPA loop) |
 | `sim_board.py` | Virtual CW305: noise+leakage model fitted from real captures, same `query(nonce)` interface as `LiveQuery` |
-| `view_dataset.py` | SNR/NICV/alignment/spectrum HTML EDA report |
 | `verify_oracle.py` | Offline oracle self-test + batch perf |
 | `training/train.py` | CNN/MLP profile training (cnn1/cnn2/mlp), 80/20 split, HW label |
 | `training/attack.py` | Guessing-entropy / key-rank evaluation |
 | `training/adaptive.py` | Closed-loop ACPPA engine (`--validate` offline, `--attack --sim` virtual, `--attack` real board) |
+| `training/train_joint.py` | Joint CNN: 64 per-column S-box heads + KADD byte head on one shared CNN |
+| `training/train_joint_transformer.py` | Joint CNN + causal Transformer integrator (per-column sequences, alive-mask elimination, sim-episode stage 2) |
+| `training/live_loop_gru.py` / `live_loop_transformer.py` | Self-play live loop: fresh random key → GRU/Transformer attack over all 64 columns → oracle labels → replay → fine-tune every `--train-every` |
 | `training/kadd_acppa.py` | Full-key beam-search ACPPA on KADD intermediate (8 per-byte profiles, 16-byte key search) |
 | `training/live_finetune.py` | Live on-board profile fine-tuning at known key + random nonces (`--random-keys` spreads the true-HW class over the column's full support — a fixed key collapses onto a key-dependent subset like {3,4}, which is why the full-key attack locked hyp 1) |
-| `training/sim_sweep.py` | SNR threshold sweep against virtual board |
 | `training/snr_sweep.py` | Per-column SNR sweep on real captures |
 | `training/overview.py` | Side-by-side health comparison of all `Dataset/*.h5` files |
 | `training/eda.py` | Per-dataset EDA report (health, alignment, active region, leakage scans) |
@@ -145,11 +133,7 @@ The S-box target is factorable per-column (2 bits → 4 hypotheses) but the mask
   `adc_src='clkgen_x4'` maps to `adc_mul=4` = 160 MS/s, breaking timing).
   Husky gain range -15..+65 dB. Bring-up/runbook: `HUSKY_SETUP.md`.
   Pre-Husky backup: `backup_pre_husky/`.
-- `training/active_loop.py`: unified closed loop — model picks each nonce
-  (posterior-aware separating selection), online-trains on the trace
-  (replay buffer), guesses the key; epoch ends on `--stable-n` repeats of the
-  same guess at posterior > `--converge-p` OR `--max-traces`. Random key per
-  epoch (oracle labels); `--attack-key` switches to real attack mode.
+- Dedup (Aug 22): one file per purpose — gain `pick_gain.py`, bring-up `sanity_check.py`, EDA `training/eda.py`+`overview.py`, closed-loop engines `training/adaptive.py` (sequential ACPPA) and `training/live_loop_transformer.py` (self-play joint). Superseded variants live in `legacy/` or git history (`pilot_gain`, `check_setup`, `view_dataset`, `sim_sweep`, `active_loop`, `adaptive_joint`, `adaptive_parallel`, `run_full_attack`, GRU stack `train_joint_gru`/`live_loop_gru`/`adaptive_gru`).
 - CW305 register map: KEY=0x0a, TEXTIN=0x06, NONCEIN=0x0d, CIPHEROUT=0x09, TAGOUT=0x0c, TEXTIN_BUF=0x12, VALID_AD=0x10, VALID_MSG=0x11
 - `REG_CLKSETTINGS=0x19` enables `tio_clkout` (needed for `extclk_x4` mode, set in `live_query.py`)
 
@@ -167,7 +151,7 @@ Parameters: fitted from a real `.h5` capture (mean mu, per-sample leakage templa
 - Internally aligns traces before fitting (matching the preprocessing pipeline)
 - Used by `adaptive.py --attack --sim` and `training/sim_sweep.py`
 
-## Parallel full-key attack (`training/adaptive_parallel.py`)
+## Parallel full-key attack verdict (engine removed; see `legacy/` + git history)
 
 Offline validation verdict (Aug 21): **the aggregate `sbox64` sim cannot validate full-key recovery with the per-column `cnn1` profiles.** Only the strongest model (col 0, 38.5% val acc) converges correctly; most columns converge to a confident WRONG hypothesis even in the sequential `adaptive.py --all-columns` path. The single-column sim is misleadingly easy. The documented real-board success (liveft board-finetuned profile, hyp 3, 32 queries) does not reproduce in sim — the sim's aggregate leakage template is not faithful enough at the per-column level, and the plain cnn1 profiles are too weak at this SNR (~14/64 columns leak below chance).
 
@@ -199,7 +183,7 @@ Plus `target` field (`sbox` or `kadd`). Don't add/remove keys without updating a
 `training/labels.py` (numpy, vectorized) and `ascon_ref.py` (Python reference, byte-exact). They **must** be bit-identical. `training/labels.py` includes `_self_test()` verifying against `ascon_ref.py` (run with `python3 training/labels.py`). `training/eda.py` imports `kadd_labels` from `ascon_ref`, not from `labels.py`.
 
 ### clkgen_x4 vs extclk_x4
-`pilot_gain.py` attempts `extclk_x4` (ADC clocked from crypto clock via ODDR/tio_clkout — drift-free sampling) but may not be stable at all sample counts. Actual datasets use `clkgen_x4` (ADC clocked from scope's internal PLL) with software cross-correlation alignment in `preprocess.py`. `extclk_x4` would eliminate alignment jitter if stable.
+`pick_gain.py` (formerly pilot_gain) attempts `extclk_x4` (ADC clocked from crypto clock via ODDR/tio_clkout — drift-free sampling) but may not be stable at all sample counts. Actual datasets use `clkgen_x4` (ADC clocked from scope's internal PLL) with software cross-correlation alignment in `preprocess.py`. `extclk_x4` would eliminate alignment jitter if stable.
 
 ### HW class cardinality matters for loss weighting
 S-box: classes 0–5 (6 classes). KADD: classes 0–8 (9 classes). Some classes may be empty depending on key/nonce distribution. Training must weight empty classes as 0 in the loss function, otherwise the model learns to predict impossible classes.
@@ -230,7 +214,7 @@ Full RTL audit + bitstream rebuild done while the board was disconnected:
 - Wrapper (cw305_top.v FSM + cdc_pulse + clocks.v) audited: `load_data` (O_start pulse) enters core INIT_LOAD, `start` (FSM LOAD_DATA) exits it — one cycle each, no race.
 - Rebuilt `vivado_ascon/ascon_cw305_top.bit` (unmasked, `ASCON_UNMASKED=1 bash build_bitstream.sh`): 0 errors, 0 critical warnings, timing met (WNS=0.997, WHS=0.105), `sha256=b0fb6d6f…`.
 - **Root cause of the Aug-12 post-replug freeze** (KEY round-tripped, NONCEIN read back 0, output frozen nonce-independent): the FPGA was running the **stock AES config** (from SPI flash after the replug), not our bitstream. Stock AES defines KEY at 0x0a (so KEY readback works) but has no NONCEIN register (map stops at 0x0b → default read 0). `IDENTIFY`=0x2e/`CRYPT_TYPE`=2 also match the stock template (values inherited from it), so IDENTIFY matching did not prove our bitstream was resident. No Verilog bug; reflash the board, then `python3 sanity_check.py` must pass 5/5 before attacking.
-- Board-side gate after replug: `sanity_check.py` 5/5 → then `pilot_gain.py` for the current gain fingerprint → then continue the gain-20 full-key attack.
+- Board-side gate after replug: `sanity_check.py` 5/5 → then `pick_gain.py` for the current gain fingerprint → then continue the gain-20 full-key attack.
 
 ## Notes
 
@@ -252,3 +236,68 @@ Full RTL audit + bitstream rebuild done while the board was disconnected:
   does NOT show 1/sqrt(M) (jitter+drift inflate raw variance) but the pipeline's
   align-then-z-score removes both — rank metrics are the ground truth.
 
+
+## Bitstream verification verdict (Aug 24)
+
+The "unmasked" bitstream behaves as **masked d=1**. Evidence chain:
+- `verify_core.py`: share-0 state (REG_CRYPT_STATEOUT 0x0e) correlates with
+  S-box HW labels at noise level (max |r|=0.10 at N=1500, floor 0.09) —
+  share 0 is a random share, not the state.
+- A/B timing `ascon_cw305_top.bit` vs `.masked_d1.bit`: identical (3.12 vs
+  3.11 ms) — same logic synthesized.
+- `rebuild_unmasked.log` shows `fresh_r[0]`/`sel_masked_round` "no load"
+  warnings (dead masked-path ports = d=0 elaboration), BUT the runtime
+  behavior contradicts d=0. Root cause suspect: the ASCON_UNMASKED define
+  sets `d` in `ascon_params.sv`, but the datapath keeps share registers and
+  the FSM never reconfigures — or the define didn't propagate (tcl block was
+  verified present; elaboration warnings suggest it DID apply, yet behavior
+  is masked → the RTL's d=0 path is not actually unmasked in operation).
+- Consequence: ALL captured datasets are masked-core captures. The −20 dB
+  flat first-order SNR across every dataset/gain is the masking signature.
+  No profiling model can extract what isn't there first-order.
+
+RESOLVED Aug 24 (evening): replaced entirely. See next section.
+
+### Sim-verified root cause (Aug 24, 14:50)
+Verilator sim of the same RTL (ASCON_UNMASKED active — elab warnings confirm
+`fresh_r[0]`/`sel_masked_round` dead ports) shows `state_reg_out` does NOT
+equal the ASCON internal state in any byte order/IV convention tried, while
+CT/TAG still match the oracle. Combined with the board share-0 correlation
+at noise level: **the d=0 path in this RTL does not collapse masking.**
+`state_reg_out = state_reg_out_shares[0]` always exposes a random share.
+The masked-path datapath (`state_reg_*_shares`, DOM sbox banks) is structurally
+present at every `d`; `ascon_params::d=0` shrinks widths but never bypasses
+the share domain. A true unmasked core needs an RTL change (dedicated d=0
+datapath bypassing shareCreator/DOM), not just a define.
+
+## Unmasked core swap (Aug 24, evening)
+
+The masked RTL was REPLACED wholesale with the official unmasked reference:
+
+- **Core**: `rprimas/ascon-verilog` @ main (CC0). Files vendored into both
+  `vivado_ascon/rtl_ref/` (pristine + dbg taps) and `vivado_ascon/rtl/`
+  (build copies). Local additions to `ascon_core.sv`: `dbg_fsm`, `dbg_wcnt`,
+  `dbg_state` output ports (state observability for REG_CRYPT_STATEOUT 0x0e).
+- **Adapter**: `vivado_ascon/rtl/ascon_top.sv` — port-identical to the old
+  top, so `cw305_top.v`, `cw305_reg_ascon.v`, the shim and all host scripts
+  are unchanged. Buffers one 128-bit block per phase (AD then MSG), feeds it
+  as 64-bit BDI beats; latches ct/tag; `done` holds until re-arm.
+  Assumption: exactly ONE AD block then ONE MSG block per query (matches the
+  wrapper FSM).
+- **Verification (all passing before build)**:
+  - `tb_core.sv` — raw core, 5 NIST KATs byte-exact vs `.venv` oracle +
+    final-state x3/x4 == tag words (single unshared state)
+  - `tb_verify.sv` — adapter + old protocol, 5 KATs byte-exact readback
+  - `tb_full.sv` — 16-byte PT two-beat path (live_query case), ct/tag exact,
+    live state observable through adapter
+- **CRITICAL build flag**: `build_ascon_cw305.tcl` now sets verilog_define
+  `V4` ALWAYS. Without V4 the core silently compiles as CCW=32/V1.
+- **Timing change**: crypto is now ~35-85 cycles (~3.5-8.5 us at 10 MHz)
+  vs ~3 ms before. The trigger window shrinks by ~400x — scope samples /
+  offset / preprocessing windows MUST be recalibrated; at 40 MS/s a full
+  encryption is only ~350 samples (consider lower crypto clock or Husky's
+  higher rates for profiling resolution).
+- The two extra 10k gain-35 datasets collected Aug 24 daytime were captured
+  on the OLD bitstream = still masked-core captures (masked baselines only).
+- Board gate after flashing the new bitstream: `sanity_check.py` 5/5 →
+  `verify_core.py` must now show max |r| >> 0.5 (real state exposed).

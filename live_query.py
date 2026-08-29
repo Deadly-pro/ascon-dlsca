@@ -27,7 +27,7 @@ import sys
 
 import chipwhisperer as cw
 
-from ascon_ref import ascon_encrypt
+from ascon_ref import fpga_expected
 from cw305_ascon_shim import wrap
 from scope_config import (connect_target, configure_scope,
                           setup_scope_clock, is_husky, scope_model_name)
@@ -109,7 +109,9 @@ class LiveQuery:
         self.t.loadInput(nonce)
         self.t.go()
         got = bytes(self.t.readOutput())
-        exp = ascon_encrypt(candidate_key, nonce, b'\x00' * 4, b'\x00' * 16)
+        # FPGA readback is tag[:12]+ct[:4] for AD=4/PT=4 (single-block adapter);
+        # fpga_expected encodes exactly that, so compare against it directly.
+        exp = fpga_expected(candidate_key, nonce)
         ok = got == exp
         return ok, exp.hex(), got.hex()
 

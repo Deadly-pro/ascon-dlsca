@@ -52,6 +52,24 @@ def load_state(keys, nonces):
     return S
 
 
+def chi_only(S):
+    """aff1 + chi on (N,5) uint64, for the round-1 exposed intermediate.
+
+    Matches the sim-verified formula and the RTL amplifier's sb_chi_val. The
+    full ASCON S-box additionally applies affine2 (x1^=x0; x0^=x4; x3^=x2;
+    x2^=~x2); that step is NOT part of the algebra the round-1 per-column
+    amplifier exposes, so labels for it must use this shorter chain. The
+    KADD path (real cipher state) still uses the full substitution_layer.
+    """
+    x = S.copy()
+    x[:, 0] ^= x[:, 4]
+    x[:, 4] ^= x[:, 3]
+    x[:, 2] ^= x[:, 1]
+    t = ~x & np.roll(x, -1, axis=1)          # T[i] = ~x[i] & x[(i+1)%5]
+    x ^= np.roll(t, -1, axis=1)              # x[i] ^= T[(i+1)%5]
+    return x
+
+
 def substitution_layer(S):
     """Bit-sliced ASCON substitution layer on (N,5) uint64, == ascon_ref."""
     x = S.copy()
@@ -110,10 +128,13 @@ def kadd_words_hw(keys, nonces):
 
 
 def round1_sbox_hw(keys, nonces):
-    """(N,16) uint8 arrays -> (N, 64) uint8: HW of round-1 S-box output per column.
+    """(N,16) uint8 arrays -> (N, 64) uint8: HW of round-1 S-box output per
+    column.
 
     Column c input bits = (S0_c, S1_c, S2_c, S3_c, S4_c) with the round-0
-    constant already XORed into S2 before the substitution layer.
+    constant already XORed into S2, then the FULL substitution layer. This
+    is the exposed intermediate of the stock unmasked rprimas core. The
+    amplifier designs expose only aff1+chi — use chi_only() for those.
     """
     S = load_state(keys, nonces)
     S[:, 2] ^= np.uint64(0xF0)                # round-0 constant
@@ -128,7 +149,8 @@ def round1_sbox_hw(keys, nonces):
 
 
 def _sbox_col(v):
-    """5-bit ASCON S-box on a single column value (verified == ascon_ref)."""
+    """5-bit full ASCON S-box on a single column value (== stock core's
+    round-1 exposed intermediate; verified == ascon_ref)."""
     v = int(v)  # numpy scalar uint64 >> int can raise under some builds
     b0 = (v >> 0) & 1
     b1 = (v >> 1) & 1
@@ -152,6 +174,31 @@ def _sbox_col(v):
     b0 ^= b4
     b3 ^= b2
     b2 ^= 1
+    return b0 | (b1 << 1) | (b2 << 2) | (b3 << 3) | (b4 << 4)
+
+
+def _sbox_col_chi(v):
+    """5-bit aff1+chi on a single column value (verified == the chip's
+    round-1 exposed intermediate). Affine2 is deliberately omitted."""
+    v = int(v)  # numpy scalar uint64 >> int can raise under some builds
+    b0 = (v >> 0) & 1
+    b1 = (v >> 1) & 1
+    b2 = (v >> 2) & 1
+    b3 = (v >> 3) & 1
+    b4 = (v >> 4) & 1
+    b0 ^= b4
+    b4 ^= b3
+    b2 ^= b1
+    t0 = (~b0) & b1
+    t1 = (~b1) & b2
+    t2 = (~b2) & b3
+    t3 = (~b3) & b4
+    t4 = (~b4) & b0
+    b0 ^= t1
+    b1 ^= t2
+    b2 ^= t3
+    b3 ^= t4
+    b4 ^= t0
     return b0 | (b1 << 1) | (b2 << 2) | (b3 << 3) | (b4 << 4)
 
 
@@ -201,7 +248,7 @@ def _self_test():
 
     hw = round1_sbox_hw(keys, nonces)
 
-    # Reference: replicate ascon_ref init + round-0 constant + substitution only
+    # Reference: replicate ascon_ref init + round-0 constant + FULL S-box
     ivb = ascon_ref.to_bytes([1, 0, (8 << 4) + 12]) + \
         ascon_ref.int_to_bytes(128, 2) + ascon_ref.to_bytes([16, 0, 0])
     bad = 0

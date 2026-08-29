@@ -18,6 +18,7 @@ Usage (board session, gain from pilot_gain):
     python3 probe_averaging.py -b vivado_ascon/ascon_cw305_top.bit --gain 15
 """
 import argparse
+import hashlib
 import os
 import sys
 import time
@@ -29,6 +30,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, 'training'))
 
 from adaptive import Profile, score_trace, pick_separating_nonce
+from preprocess import align_trace
 import labels as lab
 
 
@@ -50,6 +52,8 @@ def main():
     ap.add_argument('--gain', type=int, default=15)
     ap.add_argument('--rounds', type=int, default=16)
     ap.add_argument('--M', default='1 4 16 64')
+    ap.add_argument('--extclk', action='store_true',
+                    help='Husky: lock ADC to crypto clock (phase-coherent)')
     args = ap.parse_args()
 
     Ms = [int(m) for m in args.M.split()]
@@ -67,12 +71,15 @@ def main():
     true_hyp = int(np.flatnonzero((hyps[:, 0] == k0) & (hyps[:, 1] == k1))[0])
 
     import live_query
-    lq = live_query.LiveQuery(args.bitstream, key, gain=args.gain)
+    lq = live_query.LiveQuery(args.bitstream, key, gain=args.gain,
+                              extclk=args.extclk)
     try:
         rng = np.random.default_rng(0)
         nonces = [pick_separating_nonce(col, prof.support, rng)
                   for _ in range(args.rounds)]
-        print(f'[+] probe: col {col}, {args.rounds} rounds x {M_pool} captures, '
+        bs_sha = hashlib.sha256(open(args.bitstream, 'rb').read()).hexdigest()[:8]
+        print(f'[+] probe: col {col} bit {os.path.basename(args.bitstream)} '
+              f'[{bs_sha}], {args.rounds} rounds x {M_pool} captures, '
               f'M in {Ms}, gain {args.gain} dB')
         print(f'    key bits k[{col % 8}]={k0}, k[8+col%8]={k1}  ->  true hyp {true_hyp}')
         print(f'    profile {prof.arch}  support {prof.classes}  window {prof.window}')
@@ -96,6 +103,8 @@ def main():
             t0 = time.time()
             for nonce, pool in zip(nonces, pools):
                 caps = pool[:M]
+                ref_c = caps[0]
+                caps = [align_trace(c, ref_c) for c in caps]  # align BEFORE avg
                 avg = np.mean(caps, axis=0)
                 if M > 1:
                     noises.append(noise_std(caps))

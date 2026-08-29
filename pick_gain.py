@@ -63,7 +63,9 @@ def main():
     results = {}
     for gain in gains:
         if is_husky(s) and not (scope_config.HUSKY_GAIN_MIN <= gain <= scope_config.HUSKY_GAIN_MAX):
-            print(f'{gain:>5}   out of Husky range (-15..65)')
+            print(f'{gain:>5}   out of Husky probe range '
+                  f'({scope_config.HUSKY_GAIN_MIN:.0f}..'
+                  f'{scope_config.HUSKY_GAIN_MAX:.0f})')
             continue
         s.gain.db = gain
         stds, clips, flats = [], 0, 0

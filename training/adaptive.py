@@ -85,9 +85,11 @@ class Profile:
         self.model.load_state_dict(ckpt['state_dict'])
         self.model.eval()
         self.ref = None
+        self.offset = 0
         if npz_path:
             d = np.load(npz_path, allow_pickle=True)
             self.ref = d.get('ref')
+            self.offset = int(d.get('offset', 0)) if 'offset' in d else 0
             if self.ref is None:
                 self.ref = d['traces'].mean(axis=0).astype(np.float32)
 
@@ -111,13 +113,13 @@ class Profile:
         (Cropping before aligning/z-scoring would change the per-trace
         normalization and shift the live-trace feature distribution.)
         """
-        if trace.size < self.window:
+        if trace.size < self.offset + self.window:
             return None
         t = trace.astype(np.float64)
         if self.ref is not None:
             t = align_trace(t, self.ref)
         t = zscore(t).astype(np.float32)
-        return t[:self.window]
+        return t[self.offset:self.offset + self.window]
 
 
 def separation(nonce16, column, model_support):

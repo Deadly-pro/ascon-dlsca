@@ -184,8 +184,8 @@ def ascon_encrypt(key, nonce, associateddata, plaintext, variant="Ascon-AEAD128"
     S = [0, 0, 0, 0, 0]
     k = len(key) * 8   # bits
     a = 12   # rounds
-    b = 8    # rounds era 8 prima
-    rate = 16   # bytes era 16 prima
+    b = 8    # Ascon-128a intermediate rounds
+    rate = 16   # Ascon-128a rate (bytes)
 
     ascon_initialize(S, k, rate, a, b, versions[variant], key, nonce)
     ascon_process_associated_data(S, b, rate, associateddata)
@@ -210,8 +210,8 @@ def ascon_decrypt(key, nonce, associateddata, ciphertext, variant="Ascon-AEAD128
     S = [0, 0, 0, 0, 0]
     k = len(key) * 8 # bits
     a = 12  # rounds
-    b = 8   # rounds
-    rate = 16   # bytes era 16 prima
+    b = 8   # Ascon-128a intermediate rounds
+    rate = 16   # Ascon-128a rate (bytes)
 
     ascon_initialize(S, k, rate, a, b, versions[variant], key, nonce)
     ascon_process_associated_data(S, b, rate, associateddata)

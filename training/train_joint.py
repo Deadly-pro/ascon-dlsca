@@ -35,7 +35,6 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from train import CNN, class_weights, load
-from preprocess import align_trace, zscore
 
 
 N_COLS = 64
@@ -92,15 +91,10 @@ def main():
     n = len(traces)
     assert labels.shape[1] == N_COLS, labels.shape
 
-    # preprocess identical to the profiling pipeline: align -> zscore -> crop
-    ref = d.get('ref')
-    if ref is None:
-        ref = traces.mean(axis=0).astype(np.float32)
-    X = np.empty((n, args.window), dtype=np.float32)
-    for i in range(n):
-        t = traces[i].astype(np.float64)
-        t = align_trace(t, ref)
-        X[i] = zscore(t).astype(np.float32)[:args.window]
+    # preprocess identical to the profiling pipeline: the npz traces are
+    # already aligned -> z-scored -> cropped (see preprocess.py), so use
+    # them directly; only crop to the model window.
+    X = traces[:, :args.window].astype(np.float32)
 
     split = int(n * (1 - args.val_split))
     Xt = torch.tensor(X[:split], dtype=torch.float32)[:, None]  # (N,1,W)

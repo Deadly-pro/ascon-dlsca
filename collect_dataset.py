@@ -78,6 +78,9 @@ def main():
                     help='crypto clock MHz (PLL1)')
     ap.add_argument('--extclk', action='store_true',
                     help='lock ADC to crypto clock (phase-coherent, Husky only)')
+    ap.add_argument('--pin-nb8', type=lambda s: int(s, 0), default=None,
+                    help='pin nonce byte 8 to this value (selects the muxed '
+                         'amplifier column; 0x00 -> column 0 for all traces)')
     args = ap.parse_args()
 
     fixed_key = None if args.key is None else bytes.fromhex(args.key)
@@ -112,7 +115,12 @@ def main():
     for i in range(args.num):
         key = fixed_key if fixed_key is not None else os.urandom(16)
         nonce = os.urandom(16)
+        if args.pin_nb8 is not None:
+            nonce = bytes([*nonce[:8], args.pin_nb8, *nonce[9:]])
         plan.append((key, nonce))
+    if args.pin_nb8 is not None:
+        print(f"[+] nonce byte 8 pinned to 0x{args.pin_nb8:02x} "
+              f"(amplifier sel_col={((args.pin_nb8>>4)&3)<<4 | ((args.pin_nb8>>1)&1)<<1 | (args.pin_nb8&1)})")
 
     exp_list = None
     if not args.no_verify:

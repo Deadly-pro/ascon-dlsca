@@ -114,7 +114,7 @@ def _fit_from_h5(path, column, k=300, target='sbox'):
 class SimBoard:
     """Drop-in replacement for live_query.LiveQuery (same query/verify/close)."""
 
-    def __init__(self, dataset_h5, key, column=0, amp=1.0, samples=2000,
+    def __init__(self, dataset_h5, key, column=0, amp=1.0, samples=None,
                  seed=0, flat_p=0.0, fit_k=300, rail=0.49, target='sbox',
                  program=True):
         assert len(key) == 16
@@ -132,7 +132,8 @@ class SimBoard:
         self.shifts = fit['shifts']
         self.rho5 = fit['rho5']
         self.mean_hw = fit['mean_hw']
-        self.samples = int(samples)
+        # auto-detect trace length from the fit unless explicitly overridden
+        self.samples = int(samples) if samples is not None else len(self.mu)
         self.rail = float(rail)
         self._noise_std = None
 

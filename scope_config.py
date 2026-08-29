@@ -77,9 +77,20 @@ def setup_scope_clock(scope, rate=DEFAULT_SAMPLE_RATE, extclk=False,
     """
     if is_husky(scope):
         if extclk:
+            # Husky pll_src='fpga' (extclk) makes input_freq = pll.target_freq;
+            # with a stale/unset value the PLL math divides by zero and the
+            # DCM never locks. Set it (and the source) before clkgen_freq.
+            scope.clock.target_freq = float(crypto_hz)
             scope.clock.clkgen_src = 'extclk'
-            scope.clock.clkgen_freq = float(crypto_hz)
-            scope.clock.adc_mul = int(round(rate / float(crypto_hz)))
+            adc_mul = int(round(rate / float(crypto_hz)))
+            clkgen_freq = float(crypto_hz)
+            # CLKGEN DCM output floor ~3.2 MHz: keep the base clock above it,
+            # halving adc_mul to preserve the sample rate and phase coherence.
+            while clkgen_freq < 3.2e6 and adc_mul > 1:
+                clkgen_freq *= 2.0
+                adc_mul //= 2
+            scope.clock.clkgen_freq = clkgen_freq
+            scope.clock.adc_mul = adc_mul
         else:
             scope.clock.clkgen_src = 'system'
             scope.clock.adc_mul = 1

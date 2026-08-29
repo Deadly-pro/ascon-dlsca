@@ -45,7 +45,7 @@ if ROOT not in sys.path:
 import labels as lab
 from train import CNN, MLP
 from attack import build_input
-from ascon_ref import ascon_encrypt
+from ascon_ref import ascon_encrypt, fpga_expected
 
 
 class KaddProfiles:
@@ -160,8 +160,9 @@ def run_attack(prof, query, key, max_queries, beam=256,
         # verify top candidate against the board's ciphertext
         top = int(np.argmax(log_acc))
         try:
-            exp = ascon_encrypt(bytes(cand[top]), bytes(nonce),
-                                b'\x00' * 4, b'\x00' * 16)
+            # Board readback is tag[:12]+ct[:4] for AD=4/PT=4; fpga_expected
+            # encodes exactly that (ascon_encrypt uses PT=16 and wrong order).
+            exp = fpga_expected(bytes(cand[top]), bytes(nonce))
             if bytes(ct) == exp:
                 if not quiet:
                     print(f'[+] CRACKED at query {q}: key {bytes(cand[top]).hex()} '
