@@ -19,12 +19,12 @@ REG_STATEOUT = 0x0e
 
 def oracle_final_state(key16, nonce16):
     from ascon_ref import int_to_bytes
-    k = int.from_bytes(key16, 'big')
+    k = len(key16) * 8
     S = [0, 0, 0, 0, 0]
-    ascon_initialize(S, k, 16, 12, 8, 1, key16, nonce16)
-    ascon_process_associated_data(S, 8, 16, b'\x00' * 4)
-    ascon_process_plaintext(S, 8, 16, b'\x00' * 4)
-    ascon_finalize(S, 16, 12, key16)
+    ascon_initialize(S, k, 8, 12, 6, 1, key16, nonce16)
+    ascon_process_associated_data(S, 6, 8, b'\x00' * 4)
+    ascon_process_plaintext(S, 6, 8, b'\x00' * 4)
+    ascon_finalize(S, 8, 12, key16)
     return b''.join(int_to_bytes(w, 8) for w in S)
 
 

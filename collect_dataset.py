@@ -81,6 +81,12 @@ def main():
     ap.add_argument('--pin-nb8', type=lambda s: int(s, 0), default=None,
                     help='pin nonce byte 8 to this value (selects the muxed '
                          'amplifier column; 0x00 -> column 0 for all traces)')
+    ap.add_argument('-M', '--avg-m', type=int, default=1,
+                    help='capture M traces of the SAME (key, nonce) and store '
+                         'their mean as one trace (M=64 buys ~8x SNR via '
+                         'nonce-repetition averaging; label is unchanged). '
+                         'Random keys + M>1 gives a shortcut-resistant '
+                         'leakage probe AND a random-key profile dataset.')
     args = ap.parse_args()
 
     fixed_key = None if args.key is None else bytes.fromhex(args.key)
@@ -128,78 +134,64 @@ def main():
         exp_list = batch_fpga_expected(plan)
         print(f"[+] oracle: {len(exp_list)} expected readbacks in {time.time()-t0:.1f}s")
 
+    want = max(1, args.avg_m)
     for i, (key, nonce) in enumerate(plan):
         t.loadEncryptionKey(key)
         t.loadInput(nonce)
-        # The arm/go/trigger sequence has a known race: ~50 % of captures come
+        # The arm/go/trigger sequence has a known race: some captures come
         # back flat because the ADC triggered on the tail of the previous
         # transaction instead of this op. The scope.capture() return flag is
         # unreliable here (both timeout and success can carry a live trace), so
-        # judge purely by content + oracle verify. Retry the same (key, nonce)
-        # a few times, keeping only a verified, non-flat, non-clipped capture.
+        # judge purely by content + oracle verify. With --avg-m M we keep M
+        # good captures of this SAME (key, nonce) (same label, same readback)
+        # and store their mean: noise drops ~sqrt(M), signal is unchanged.
+        pool = []
         attempt = 0
-        while True:
+        budget = want + args.max_retry
+        while len(pool) < want and attempt < budget:
             attempt += 1
             scope.arm()
             t.go()
             scope.capture()
             trace = scope.get_last_trace()
             if trace is None or trace.size == 0 or trace.size < 64:
-                if attempt >= args.max_retry:
-                    flats += 1
-                    break
                 _drain(t)
                 continue
             if trace.size != args.samples:
-                if attempt >= args.max_retry:
-                    flats += 1
-                    break
                 _drain(t)
                 continue
             if not np.isfinite(trace).all():
-                if attempt >= args.max_retry:
-                    flats += 1
-                    break
                 _drain(t)
                 continue
             if trace.std() < args.std_floor:
-                if attempt >= args.max_retry:
-                    flats += 1
-                    break
                 _drain(t)
                 continue
+            pool.append(trace)
+        if len(pool) < want:
+            flats += 1
+            continue
+        trace = pool[0] if want == 1 else np.mean(pool, axis=0)
 
-            ct = bytes(t.readOutput())
+        ct = bytes(t.readOutput())
 
-            if not args.no_verify:
-                exp = exp_list[i]
-                if ct != exp:
-                    print(f"    trace {i} (att {attempt}): VERIFY FAILED got={ct.hex()} exp={exp.hex()} — skipping")
-                    verify_fails += 1
-                    if verify_fails >= args.max_fail:
-                        sys.exit(f"aborting: {verify_fails} consecutive verify failures")
-                    break
-
-            peak = float(np.abs(trace).max())
-            if not np.isfinite(peak):
-                if attempt >= args.max_retry:
-                    flats += 1
-                    break
-                _drain(t)
+        if not args.no_verify:
+            exp = exp_list[i]
+            if ct != exp:
+                print(f"    trace {i} (att {attempt}): VERIFY FAILED got={ct.hex()} exp={exp.hex()} — skipping")
+                verify_fails += 1
+                if verify_fails >= args.max_fail:
+                    sys.exit(f"aborting: {verify_fails} consecutive verify failures")
                 continue
-            if peak > args.clip_threshold:
-                clips += 1
-                if attempt >= args.max_retry:
-                    break
-                _drain(t)
-                continue
-            else:
-                traces.append(trace)
-                keys.append(key)
-                nonces.append(nonce)
-                cts.append(ct)
-                break
-        if i % 50 == 0 or i == args.num - 1:
+
+        peak = float(np.abs(trace).max())
+        if not np.isfinite(peak) or peak > args.clip_threshold:
+            clips += 1
+            continue
+        traces.append(trace.astype(np.float32))
+        keys.append(key)
+        nonces.append(nonce)
+        cts.append(ct)
+        if i % 25 == 0 or i == args.num - 1:
             print(f"    {i+1}/{args.num} (stored: {len(traces)}, verify_err: {verify_fails}, clip: {clips}, flat: {flats})")
 
     tr = np.array(traces, dtype=np.float32)
@@ -222,6 +214,7 @@ def main():
         f.attrs['flat_rejected'] = flats
         f.attrs['clip_threshold'] = args.clip_threshold
         f.attrs['std_floor'] = args.std_floor
+        f.attrs['avg_m'] = args.avg_m
         f.attrs['source_bitstream'] = os.path.basename(args.bitstream)
 
     print(f"[+] Saved {tr.shape[0]} verified traces -> {args.output} "

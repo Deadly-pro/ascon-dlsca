@@ -184,8 +184,8 @@ def ascon_encrypt(key, nonce, associateddata, plaintext, variant="Ascon-AEAD128"
     S = [0, 0, 0, 0, 0]
     k = len(key) * 8   # bits
     a = 12   # rounds
-    b = 8    # Ascon-128a intermediate rounds
-    rate = 16   # Ascon-128a rate (bytes)
+    b = 6    # Ascon-128 intermediate rounds
+    rate = 8   # Ascon-128 rate (bytes)
 
     ascon_initialize(S, k, rate, a, b, versions[variant], key, nonce)
     ascon_process_associated_data(S, b, rate, associateddata)
@@ -210,8 +210,8 @@ def ascon_decrypt(key, nonce, associateddata, ciphertext, variant="Ascon-AEAD128
     S = [0, 0, 0, 0, 0]
     k = len(key) * 8 # bits
     a = 12  # rounds
-    b = 8   # Ascon-128a intermediate rounds
-    rate = 16   # Ascon-128a rate (bytes)
+    b = 6   # Ascon-128 intermediate rounds
+    rate = 8   # Ascon-128 rate (bytes)
 
     ascon_initialize(S, k, rate, a, b, versions[variant], key, nonce)
     ascon_process_associated_data(S, b, rate, associateddata)
@@ -238,8 +238,7 @@ def ascon_initialize(S, k, rate, a, b, version, key, nonce):
     nonce: a bytes object of size 16
     returns nothing, updates S
     """
-    taglen = 128
-    iv = to_bytes([version, 0, (b<<4) + a]) + int_to_bytes(taglen, 2) + to_bytes([rate, 0, 0])
+    iv = to_bytes([k, rate * 8, a, b, 0, 0, 0, 0])
     S[0], S[1], S[2], S[3], S[4] = bytes_to_state(iv + key + nonce)
     if debug: printstate(S, "initial value:")
 
@@ -266,7 +265,7 @@ def ascon_process_associated_data(S, b, rate, associateddata):
     # print(f"[*] ascon_process_associated_data: using b = {b}")
 
     if len(associateddata) > 0:
-        a_padding = to_bytes([0x01]) + zero_bytes(rate - (len(associateddata) % rate) - 1)
+        a_padding = to_bytes([0x80]) + zero_bytes(rate - (len(associateddata) % rate) - 1)
         a_padded = associateddata + a_padding
 
         # 👇 DEBUG print
@@ -286,7 +285,7 @@ def ascon_process_associated_data(S, b, rate, associateddata):
             ascon_permutation(S, b)
 
 
-    S[4] ^= 1<<63
+    S[4] ^= 1
     if debug: printstate(S, "process associated data:")
 
 
@@ -300,34 +299,30 @@ def ascon_process_plaintext(S, b, rate, plaintext):
     returns the ciphertext (without tag), updates S
     """
     p_lastlen = len(plaintext) % rate
-    p_padding = to_bytes([0x01]) + zero_bytes(rate-p_lastlen-1)
+    p_padding = to_bytes([0x80]) + zero_bytes(rate-p_lastlen-1)
     p_padded = plaintext + p_padding
 
     # 👇 DEBUG print
     #print("Plaintext original :", plaintext.hex())
     #print("Plaintext + padding:", p_padded.hex())
 
-    # first t-1 blocks
     ciphertext = to_bytes([])
     for block in range(0, len(p_padded) - rate, rate):
         S[0] ^= bytes_to_int(p_padded[block:block+8])
-        S[1] ^= bytes_to_int(p_padded[block+8:block+16])
-        ciphertext += (int_to_bytes(S[0], 8) + int_to_bytes(S[1], 8))
+        if rate == 16:
+            S[1] ^= bytes_to_int(p_padded[block+8:block+16])
+            ciphertext += (int_to_bytes(S[0], 8) + int_to_bytes(S[1], 8))
+        else:
+            ciphertext += int_to_bytes(S[0], 8)
         ascon_permutation(S, b)
 
-    # last block t
     block = len(p_padded) - rate
-    m0 = bytes_to_int(p_padded[block:block+8])
-    m1 = bytes_to_int(p_padded[block+8:block+16])
-
-    
-    #print("🔍 Data for XOR operation:")
-    #print(f"  m0 (block {block}-{block+8}):  {m0:016x}")
-    #print(f"  m1 (block {block+8}-{block+16}): {m1:016x}")
-
-    S[0] ^= m0
-    S[1] ^= m1
-    ciphertext += ((int_to_bytes(S[0], 8)[:min(8,p_lastlen)]) + int_to_bytes(S[1], 8)[:max(0,p_lastlen-8)])
+    S[0] ^= bytes_to_int(p_padded[block:block+8])
+    if rate == 16:
+        S[1] ^= bytes_to_int(p_padded[block+8:block+16])
+        ciphertext += ((int_to_bytes(S[0], 8)[:min(8,p_lastlen)]) + int_to_bytes(S[1], 8)[:max(0,p_lastlen-8)])
+    else:
+        ciphertext += int_to_bytes(S[0], 8)[:p_lastlen]
     if debug: printstate(S, "process plaintext:")
     return ciphertext
 
@@ -344,23 +339,31 @@ def ascon_process_ciphertext(S, b, rate, ciphertext):
     c_lastlen = len(ciphertext) % rate
     c_padded = ciphertext + zero_bytes(rate - c_lastlen)
 
-    # first t-1 blocks
     plaintext = to_bytes([])
     for block in range(0, len(c_padded) - rate, rate):
-        Ci = (bytes_to_int(c_padded[block:block+8]), bytes_to_int(c_padded[block+8:block+16]))
-        plaintext += (int_to_bytes(S[0] ^ Ci[0], 8) + int_to_bytes(S[1] ^ Ci[1], 8))
-        S[0] = Ci[0]
-        S[1] = Ci[1]
+        Ci0 = bytes_to_int(c_padded[block:block+8])
+        if rate == 16:
+            Ci1 = bytes_to_int(c_padded[block+8:block+16])
+            plaintext += (int_to_bytes(S[0] ^ Ci0, 8) + int_to_bytes(S[1] ^ Ci1, 8))
+            S[0] = Ci0
+            S[1] = Ci1
+        else:
+            plaintext += int_to_bytes(S[0] ^ Ci0, 8)
+            S[0] = Ci0
         ascon_permutation(S, b)
 
-    # last block t
     block = len(c_padded) - rate
-    c_padx = zero_bytes(c_lastlen) + to_bytes([0x01]) + zero_bytes(rate-c_lastlen-1)
+    c_padx = zero_bytes(c_lastlen) + to_bytes([0x80]) + zero_bytes(rate-c_lastlen-1)
     c_mask = zero_bytes(c_lastlen) + ff_bytes(rate-c_lastlen)
-    Ci = (bytes_to_int(c_padded[block:block+8]), bytes_to_int(c_padded[block+8:block+16]))
-    plaintext += (int_to_bytes(S[0] ^ Ci[0], 8) + int_to_bytes(S[1] ^ Ci[1], 8))[:c_lastlen]
-    S[0] = (S[0] & bytes_to_int(c_mask[0:8]))  ^ Ci[0] ^ bytes_to_int(c_padx[0:8])
-    S[1] = (S[1] & bytes_to_int(c_mask[8:16])) ^ Ci[1] ^ bytes_to_int(c_padx[8:16])
+    Ci0 = bytes_to_int(c_padded[block:block+8])
+    if rate == 16:
+        Ci1 = bytes_to_int(c_padded[block+8:block+16])
+        plaintext += (int_to_bytes(S[0] ^ Ci0, 8) + int_to_bytes(S[1] ^ Ci1, 8))[:c_lastlen]
+        S[0] = (S[0] & bytes_to_int(c_mask[0:8]))  ^ Ci0 ^ bytes_to_int(c_padx[0:8])
+        S[1] = (S[1] & bytes_to_int(c_mask[8:16])) ^ Ci1 ^ bytes_to_int(c_padx[8:16])
+    else:
+        plaintext += int_to_bytes(S[0] ^ Ci0, 8)[:c_lastlen]
+        S[0] = (S[0] & bytes_to_int(c_mask[0:8])) ^ Ci0 ^ bytes_to_int(c_padx[0:8])
     if debug: printstate(S, "process ciphertext:")
     return plaintext
 
@@ -439,13 +442,13 @@ def to_bytes(l): # where l is a list or bytearray or bytes
     return bytes(bytearray(l))
 
 def bytes_to_int(bytes):
-    return sum([bi << (i*8) for i, bi in enumerate(to_bytes(bytes))])
+    return int.from_bytes(to_bytes(bytes), 'big')
 
 def bytes_to_state(bytes):
     return [bytes_to_int(bytes[8*w:8*(w+1)]) for w in range(5)]
 
 def int_to_bytes(integer, nbytes):
-    return to_bytes([(integer >> (i * 8)) % 256 for i in range(nbytes)])
+    return to_bytes([(integer >> ((nbytes - 1 - i) * 8)) % 256 for i in range(nbytes)])
 
 def rotr(val, r):
     return (val >> r) | ((val & (1<<r)-1) << (64-r))
@@ -525,12 +528,16 @@ if __name__ == "__main__":
 # --- CW305 FPGA readback oracle ---
 # AD = 4 zero bytes, PT = 4 zero bytes (matches old y=32 / l=32 config).
 # readOutput() returns tag[:12] + ct[:4] = 16 bytes.
-# The core now IS standard ASCON-128 — matches ascon_encrypt byte-for-byte.
+# FPGA register reads return 32-bit words in little-endian byte order;
+# Python internally uses big-endian, so we reverse each 32-bit word.
+
+def _le32_words(b):
+    return b''.join(b[i:i+4][::-1] for i in range(0, len(b), 4))
 
 def fpga_expected(key, nonce):
     ct_tag = ascon_encrypt(key, nonce, b'\x00\x00\x00\x00', b'\x00\x00\x00\x00')
     ct, tag = ct_tag[:4], ct_tag[4:]
-    return tag[:12] + ct   # 12B truncated tag + 4B ct = 16B readback
+    return _le32_words(tag[:12]) + _le32_words(ct)   # 12B truncated tag + 4B ct = 16B readback
 
 
 def batch_fpga_expected(pairs, return_mask=False):
@@ -548,6 +555,6 @@ def kadd_labels(keys_bytes, nonces_bytes):
     labels = []
     for key, nonce in zip(keys_bytes, nonces_bytes):
         S = [0, 0, 0, 0, 0]
-        ascon_initialize(S, 128, 16, 12, 8, 1, key, nonce)
+        ascon_initialize(S, 128, 8, 12, 6, 1, key, nonce)
         labels.append(int(S[3]).bit_count())
     return np.array(labels, dtype=np.uint8)

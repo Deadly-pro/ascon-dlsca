@@ -124,7 +124,13 @@ def main():
         args.window = w_full if args.arch in ('cnn2', 'mlp') else min(400, w_full)
     traces = traces[:, :args.window]
     y = labels[:, args.column].astype(np.int64)
-    classes = np.arange(9)  # HW of a byte: fixed 0..8 space (empty classes get weight 0)
+    # S-box labels live in 0..5, KADD byte HW in 0..8. Restrict the class
+    # space to the target so softmax capacity and the chance baseline are
+    # both correct (empty classes get weight 0 within the real space).
+    if args.target == 'sbox':
+        classes = np.arange(6)
+    else:
+        classes = np.arange(9)
     n_classes = len(classes)
     name = os.path.splitext(os.path.basename(args.npz))[0]
     hidden = args.hidden or ([128] if args.arch in ('cnn1', 'cnn2') else [128, 256, 256])

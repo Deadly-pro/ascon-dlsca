@@ -274,7 +274,7 @@ def _self_test():
     kbad = 0
     for i in range(n):
         S = [0, 0, 0, 0, 0]
-        ar.ascon_initialize(S, 128, 16, 12, 8, 1, bytes(keys[i]), bytes(nonces[i]))
+        ar.ascon_initialize(S, 128, 8, 12, 6, 1, bytes(keys[i]), bytes(nonces[i]))
         w3 = int(S[3])
         for b in range(8):
             if khw[i, b] != bin(w3 & 0xFF).count('1'):

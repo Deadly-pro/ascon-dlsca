@@ -23,20 +23,20 @@ from cw305_ascon_shim import wrap
 # (key_hex, nonce_hex, ct_hex, tag_hex, ro_hex)
 VECTORS = [
     ("000102030405060708090a0b0c0d0e0f", "000102030405060708090a0b0c0d0e0f",
-     "19378c6a", "19c8f96a6b6a4fe5caa719a760c78aba",
-     "19c8f96a6b6a4fe5caa719a719378c6a"),
+     "037ef9c8", "966c2a88e7d61e6f5b75e8cfa0062047",
+     "966c2a88e7d61e6f5b75e8cf037ef9c8"),
     ("deadbeefcafebabe0001020304050607", "102030405060708090a0b0c0d0e0f000",
-     "d1dc9341", "94f0b9bc9fa873085c828fe648c34f28",
-     "94f0b9bc9fa873085c828fe6d1dc9341"),
+     "811b8c4a", "7a916e2290f78bedae4bc30c34f6faad",
+     "7a916e2290f78bedae4bc30c811b8c4a"),
     ("00000000000000000000000000000000", "00000000000000000000000000000000",
-     "9761cfb5", "3e2a56698ec81e2e053815e880d27d7d",
-     "3e2a56698ec81e2e053815e89761cfb5"),
+     "446c3a1d", "1c56ca2a9986558f31d26dde51e5c69e",
+     "1c56ca2a9986558f31d26dde446c3a1d"),
     ("ffffffffffffffffffffffffffffffff", "ffffffffffffffffffffffffffffffff",
-     "864ebb5a", "6a9d3f7ad41bbe299bf436206894108b",
-     "6a9d3f7ad41bbe299bf43620864ebb5a"),
+     "e31bb6ef", "124fae2e3124b1f63f9bab002e0dd1fd",
+     "124fae2e3124b1f63f9bab00e31bb6ef"),
     ("0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210",
-     "4dc496f3", "502074376152408dc9d4707221552e27",
-     "502074376152408dc9d470724dc496f3"),
+     "cda783c4", "c4adde2ac4a057a37db1d17468087c9f",
+     "c4adde2ac4a057a37db1d174cda783c4"),
 ]
 
 
