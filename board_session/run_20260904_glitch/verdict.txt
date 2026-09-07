@@ -1,0 +1,199 @@
+Clock-glitch + DFA board session — day verdict
+Date: 2026-09-04 (Friday board session)
+Key (fixed): 8826d916cdfb21c6c1ff91a761565a70
+Nonce (fixed): 000102030405060708090a0b0c0d0e0f
+Tag: 2d71712fea84f2711c6ec3d8dac3abc6
+Bitstream: vivado_ascon/ascon_cw305_top.bit (unmasked NIST LWC core)
+Scope: CW-Husky, glitch clock via hs2 -> 20-pin -> tio_clkin (reg 0x05),
+        clock_xor output, pss=3360, w in phase-shift steps (not percent)
+
+=====================================================================
+WHAT WORKS (verified, real)
+=====================================================================
+1. Full clock path to the core is sound in EVERY mode:
+   PLL1 (0x19), external clkgen (0x05 + hs2=clkgen), glitch-module clock
+   (0x05 + hs2=glitch, offset=width=0). All PASS ct-sanity via AsconMux.
+   The original "gate FAIL" was a HOST bug: calling loadEncryptionKey()/
+   loadInput() on the RAW cw305 target (stock-AES protocol) instead of
+   wrap(target) (AsconMux shim, w32rev + VALID handshake). Not hardware.
+   Scripts fixed: diag_extclk.py, glitch_cal.py, glitch_collect.py.
+   Also fixed: Husky offset/width are INTEGER phase-shift steps, not
+   CW-Lite percent; ext_single trigger REQUIRES scope.arm() per query.
+
+2. Real, reproducible, ct-intact (FTL) finalization faults EXIST.
+   config: ext_offset=45, offset=0 or 3359, width=67, clock_xor
+   -> ~14-27% of queries come back with ct correct but tag wrong.
+   Deterministic: 276 consecutive faults -> 1 distinct faulty tag.
+
+3. Fault-round signature (tag bit-diff vs correct tag) is a clean map:
+   ~62/128 bits  -> fault lands EARLY in finalization (many rounds of
+                    diffusion remain) -> fully scrambled, DFA-useless
+   1/128 bit     -> fault lands at the ROUND-12 OUTPUT register (after
+                    last S-box, after key XOR) -> leaks nothing
+   10-40/128     -> round-11 S-box INPUT fault = the DFA target
+                    (verified by simulation on the fixed key: round-11
+                     S-box-input faults produce byte-diff 7-16,
+                     bit-diff 10-40)
+
+=====================================================================
+WHAT THE SWEEPS PROVED (negative result)
+=====================================================================
+1. eo=31 (off=0/3359, w=67) faults 62-bit = too early.
+2. eo=45 (off=0/3359, w=67) faults 1-bit = too late (output latch).
+3. EVERYTHING between is silent:
+   - eo 36..52 x 12 offsets, w=67: only eo=45 fires.
+   - eo 40..44 x 48 offsets (full offset resolution), w=67: ZERO faults.
+   - width 0..3359 at eo=44/off=3359: ZERO faults at every width.
+   => The 10-40-bit DFA band is not reachable at w=67. The glitch only
+      fires on data-transition edges that exist at exactly two crypto
+      cycles for this (key, nonce) at this width; neither is the
+      round-11 S-box input stage.
+
+=====================================================================
+WHY FULL-KEY DFA DID NOT CLOSE
+=====================================================================
+1. The only real faults found (eo=45) are in the round-12 OUTPUT
+   register: a single bit flips after the final key-dependent S-box and
+   after the key whitening XOR -> the faulty tag differs from the true
+   tag in exactly that one public bit -> zero key information.
+2. A deterministic single-location glitch gives ONE distinct fault.
+   The DFA needs, per state column, >=2 distinct faults (different
+   flipped bits) on the SAME fixed nonce, across ALL 64 columns.
+   Deterministic faults cannot produce that from one config; finding
+   ~64 configs that each fault a different column at round-11 input is
+   a multi-session grind and this session found ZERO configs in the
+   usable band.
+3. Even the DFA sweet spot (10-40 bit faults) would only recover the
+   round-11 S-box input one column at a time; all 64 columns are needed
+   for the key.
+
+=====================================================================
+CONCLUSION / PAPER STORY
+=====================================================================
+The full-key "crack it on the board" claim did NOT close today. What IS
+real and paper-ready:
+
+  * Verified clock-glitch injection path into the NIST ASCON core on
+    the CW305+Husky (fixing the host-protocol bug that faked the early
+    failures).
+  * First real glitch faults in the ASCON finalization (ct-intact),
+    deterministic and reproducible, with a tag-diff signature that
+    localizes the fault to a specific finalization stage.
+  * Bit-flip DFA solver validated in simulation: 15 faults/column ->
+    64/64 columns -> full 128-bit key (Nakamura et al. model), with
+    known-key fault localization 25/25 exact.
+  * Honest negative: single-config deterministic clock glitches land in
+    the round-12 output latch, not the round-11 S-box input the DFA
+    needs, at the widths/offsets/eo searched.
+
+Paper framing that is defensible: "Clock glitching on the unprotected
+NIST ASCON-128 hardware core: verified finalization faults, fault-stage
+localization via tag differentials, and a simulation-validated full-key
+bit-flip DFA" — with the on-hardware key-recovery step stated honestly
+as open (fault-stage placement) rather than fabricated.
+
+NEXT (if board time returns):
+  - Hunt OTHER (key, nonce) pairs: the faulting cycle depends on data
+    transitions, so another key/nonce may have its round-11 S-box-input
+    edge firing at some eo. Automate: for each candidate nonce run the
+    eo 30..50 settled scan, keep any config whose tag bit-diff is 10-40.
+  - Try lower crypto clock (5 MHz) to widen the per-cycle window, or
+    glitch_only output with a NARROW width (67) now that steady-state
+    measurement is understood.
+  - If a 10-40-bit config is found: collect 300-2000 faults, localize
+    (localize_fault), solve (dfa_bitflip), verify_key.
+
+=====================================================================
+ADDENDUM (evening): state-disclosure plan — status and validity caveats
+=====================================================================
+1. eo=31 fault IDENTIFIED offline from the captured faulty tag (public
+   output only, no debug port): single-bit flip, word1 bit27, at the
+   round-0 S-box input of the finalization = the finalization
+   key-injection stage. Matched exactly against simulated fault models.
+   This IS a verified hardware result derived from public outputs only.
+
+2. state_disclosure.py (invert frozen mid-init state -> full key,
+   self-verified by IV+nonce check): SIM-VALIDATED 40/40 only.
+   NEVER RUN ON HARDWARE. No capture in any session contains a
+   REG_CRYPT_STATEOUT read. glitch_disclose.py is written but untested.
+
+3. VALIDITY CAVEAT (checked against freshly cloned upstream):
+   the 320-bit live-state output (dbg_state on the core -> state_reg_out
+   in ascon_top.sv -> REG_CRYPT_STATEOUT 0x0e in the wrapper) is a LOCAL
+   ADDITION of this project, not present in the official repos:
+     - ascon/ascon-hardware (unprotected): CryptoCore.vhd has ZERO
+       dbg ports (state_out there is the internal Asconp component
+       signal only).
+     - ascon/ascon-hardware-sca (masked v1-v4): same, no dbg ports.
+   => A key-recovery claim that READS THE STATE REGISTER is
+   design-instrumented (we added the observability ourselves). It is
+   legitimate as (a) fault-model verification instrumentation, or
+   (b) a scan/debug-port-class attack under an explicit state-
+   observability threat model. It is NOT a valid attack claim against
+   the unmodified official NIST design.
+   => The official-design-valid key-recovery path remains public-output
+   (tag/ct) DFA, which is currently blocked by fault placement (no
+   10-40-bit-diff fault config found at w=67 for this key/nonce).
+
+=====================================================================
+ADDENDUM 2 (Sep 7 — LAST board session): both arms closed by measurement
+=====================================================================
+A. PA/DL-SCA arm — closed with the confounding artifact identified.
+   1. Full 64-column CNN sweep on crunch_M16 (1500 tr): 0/64 beat the
+      majority floor; median margin -9.4 pts. Prior "leakage" flags were
+      unstratified-split artifacts.
+   2. Voltage 0.88-1.00 V (vprobe captures): all at/under floor once
+      stratified. No VCCINT voltage lifts first-order leakage.
+   3. Friend's HW-vs-HD / input-register lead (would-be breakthrough)
+      tested exhaustively: HW(sbox out) vs HW(col in) vs HD(in->out) on
+      raw/d1/d2, split-half, max-over-samples nulls. Up to 64/64 columns
+      appeared to leak "pure key bits" (K0_c+K1_c) on prof16sc_m32/avg32.
+      *** ROOT CAUSE: the random-key datasets RE-WRITE the key bytes to
+      the FPGA register file before EVERY trace. Key-write bus leak is
+      r=0.60 (sum key-byte HW, prof16sc @621 / confirm_hwin @161). The
+      per-column "key POIs" sat exactly on the key-write samples — they
+      were echoes of the key LOAD, not ASCON crypto. ***
+   4. Fixed-key control (main_live, 3000 tr, key const): per-column
+      true-label max|r| = 0.045-0.065, ALL below the 0.079 null; the 4
+      key hypotheses give IDENTICAL correlations (no discrimination).
+      => NO first-order crypto leakage at VCCINT in any model at any
+      voltage. MANDATORY GATE for any future PA claim: the leak must
+      survive with key held constant (only nonce varying).
+   Verdict doc: board_session/verdict_hwin_hd.md
+
+B. Clock-glitch FI arm — single-bit faults REACHABLE but structurally
+   unusable for full-key DFA on this core.
+   1. This session FOUND the round-11 single-bit faults the Sep-4 session
+      said were unreachable: num_glitches=1, eo=41, off=0/3359, w=67 on
+      RANDOM nonces. 12+ clean faults localized to exact (col, bit)
+      against the known key (cols 6,15,18,24,39,41,52,...). Verified
+      single-bit round-11 S-box input faults DO exist on this core.
+   2. BUT each nonce faults EXACTLY ONE column, deterministically:
+      - full eo sweep (30-50), fine offset sweep (0-3360 in ~60 steps),
+        width sweep (20-220), 5 MHz clock, 0.92 V: nonce 8b4ae5...
+        ALWAYS column 41, nothing else.
+      - different nonces fault different single columns; ZERO nonces
+        fault at 2 eo or 2 columns in the hunt data.
+   3. Why full-key DFA is impossible: recover_key needs all 64 columns of
+      ONE nonce's round-11 state (rebuild 5-word state, propagate to tag).
+      One-column-per-nonce across different states can never assemble it.
+      Burst (num_glitches=4) hits multiple columns but as multi-round
+      superposition — 0/400 match single-bit, no 2-fault (r11+r12) model
+      reproduces the burst tags, no round-skip (p^r) tag matches with up
+      to 24 glitches, no column-replacement model matches the eo42
+      deterministic 7-bit fault (that one is output-path, post-crypto).
+   4. eo=0/5 partial fault PRESENCE is data-dependent but tracks PUBLIC
+      nonce bits (best |r|=0.49 vs nonce bit 53), not the key — the
+      documented nonce-shortcut trap, not an FSA key oracle.
+   => FI full-key DFA blocked by fault-location determinism (measured
+      structural property): glitch faults are nonce-selected single-column.
+
+C. Paper position after Sep 7 (both arms measured to a floor):
+   PA: unmasked NIST core shows NO first-order DL-SCA leakage at VCCINT
+   (0.88-1.00 V, HW-out/HW-in/HD models) — with the key-reload artifact
+   as a documented methodology trap (novel, useful).
+   FI: clean reproducible round-11 single-bit fault injection EXISTS
+   (12 cols localized to exact col/bit) but full-key DFA is blocked by
+   the data-selected single-column-per-nonce fault structure — a
+   structural (not SNR) property worth reporting.
+   What is NOT available: a black-box key recovery claim. Do not fabricate.

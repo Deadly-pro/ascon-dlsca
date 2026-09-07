@@ -103,7 +103,6 @@ def setup_scope_clock(scope, rate=DEFAULT_SAMPLE_RATE, extclk=False,
 
 def setup_target_clock(target, crypto_hz=10e6):
     """Configure the CW305 PLL to feed the crypto core at `crypto_hz`."""
-    target.vccint_set(1.0)
     target.pll.pll_enable_set(True)
     target.pll.pll_outenable_set(False, 0)
     target.pll.pll_outenable_set(True, 1)

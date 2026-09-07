@@ -1,0 +1,141 @@
+% paper_vlsid.tex — VLSID submission draft (deadline Sep 10)
+% Story: unmasked NIST ASCON-128 hardware core on CW305:
+%   (1) thorough profiled DL-SCA fails at the VCCINT measurement floor,
+%   (2) clock-glitch FI produces real, localized finalization faults,
+%   (3) key recovery: [MONDAY OUTCOME SLOT — see KEY RESULT macros]
+% Structured so Monday's board results drop into the marked slots only.
+% Class: local texlive has no IEEEtran; article-twocolumn compiles here
+% (same as paper.tex). Swap to the VLSID template at submission.
+\documentclass[a4paper,11pt,twocolumn]{article}
+
+\usepackage[margin=2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cite}
+
+% ── KEY RESULT MACROS — filled after Monday ──────────────────────────
+% Outcome ladder (choose ONE at submission):
+%   \blackboxtrue  : Track B/C full key on the unmodified core (headline)
+%   \demoonlytrue  : instrument-guided study + disclosure demo + sim solvers
+%   \negativeonlytrue : negative + methodology paper (floor)
+\newif\blackbox
+\newif\demoonly
+\newif\negativeonly
+\negativeonlytrue            % placeholder until Monday decides
+
+\title{Clock-Glitch Fault Injection and Profiled Side-Channel Analysis of
+the NIST ASCON-128 Lightweight Cryptography Hardware Reference:
+A Measurement-Floor Study with Verified Fault Localization}
+
+\author{Prajwal R\\nPES University, ECE, Bengaluru, India\\nruyketsu.prajwal@gmail.com}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+% [MONDAY: 2-3 sentences keyed to outcome ladder]
+We study the security of the unprotected NIST ASCON-128 hardware reference
+CryptoCore on a CW305 (Artix-7) FPGA target under two attack families:
+profiled deep-learning power side-channel analysis and clock-glitch fault
+injection. Power analysis is defeated by the measurement channel rather
+than the algorithm: total-core-current (VCCINT) probing of a 100k-gate FPGA
+places the 3k-LUT cipher's leakage at $-19$\,dB SNR, and we characterize
+the floor exhaustively across gains, clock rates, M-averaging, and
+architectures (CNN/MLP/transformer), with a single S-box column's two key
+bits recoverable only at $M{=}64$ trace averaging ($+18$\,dB). Clock
+glitching by contrast injects real, reproducible, single-bit faults into
+the finalization permutation; we localize them to specific permutation
+stages from public outputs alone (tag-differential signatures), and
+\ifblackbox recover the full 128-bit key by differential fault analysis
+in $N{=}$[FILL] queries, verified against the public-output oracle.
+\fi
+\ifdemoonly
+demonstrate single-query full-key disclosure under an explicit
+state-observability threat model on an instrumented build, with the
+black-box differential-fault-analysis pipeline validated end-to-end in
+simulation (15 faults/column $\rightarrow$ full key).
+\fi
+\ifnegativeonly
+characterize the fault-placement barrier that separates the achieved
+faults from differential-fault-analyzable ones.
+\fi
+We document three methodology traps that produce confident false
+positives in this pipeline and release all capture/attack tooling.
+\end{abstract}
+
+\section{Introduction}
+% Hook: NIST LWC winner deployed in constrained HW; its official hardware
+% reference must withstand both SCA and FI. We test both on real silicon.
+% Contributions (numbered):
+%  C1: exhaustive PA-negative at the VCCINT measurement floor (+ the one
+%      column that DOES converge at M=64 — quantifies exactly what the
+%      floor costs the attacker).
+%  C2: first clock-glitch faults inside ASCON's finalization on this
+%      target, localized to permutation stage from public outputs only.
+%  C3: [MONDAY SLOT] full-key result: black-box DFA / observability demo /
+%      barrier characterization (per outcome ladder).
+%  C4: three leakage-gate false-positive traps (prior-only CNN, edge gate,
+%      nonce-aliasing) + released toolchain.
+
+\section{Background and Target}
+% ASCON-128 structure: init p^12 (state = IV||K||N), absorb, finalization
+% p^6 with key whitening; tag = S3^k0 || S4^k1.
+% Target: ascon-hardware-sca unprotected CryptoCore (VHDL, CCW=32),
+% CW305-100t, CC-Husky scope, 40 MS/s, tio4 trigger, 10 MHz crypto clock.
+% Register map + adapter. [keep the honesty note: state observability port
+%  is a local addition; official design exposes no such port.]
+
+\section{Power Side-Channel Analysis: Characterizing the Floor}
+% 3.1 setup: random-key captures, M-averaging, gains, clock rates
+% 3.2 profiling: CNN/MLP/joint/transformer; floor-gated columns
+% 3.3 results table: SNR per config; top-1 vs chance; M-sweep
+%     (+18 dB at M=64; single column converges, 2 bits, posterior 0.999)
+% 3.4 KADD full-key intermediate: 2x-chance leakage, +3.1 nats/trace for
+%     the true key, unfactorable (12 rounds diffusion) — structural wall
+% 3.5 verdict: measurement channel, not algorithm; what would change it
+%     (EM near-field, dedicated core supply)
+
+\section{Clock-Glitch Fault Injection}
+% 4.1 injection path: Husky glitch module -> 20-pin -> tio_clkin; setup
+%     traps (phase-step units, arm-before-go, DCM-relock artifacts — the
+%     settled-scan methodology)
+% 4.2 fault evidence: deterministic single-bit finalization faults,
+%     ct-intact; eo=31 = finalization-entry (key-injection stage) fault,
+%     identified by exhaustive model matching from the public faulty tag
+% 4.3 tag-differential signature as a stage oracle: 62-bit = early,
+%     1-bit = output latch, 5-45 bit = round-11 S-box input (DFA band)
+% 4.4 [MONDAY SLOT: cycle-map-guided hunt + nonce/voltage sweep results]
+
+\section{Key Recovery}
+% [MONDAY SLOT — one of:]
+%  5A black-box: round-11 faults -> masked-DDT DFA -> 64 columns -> key,
+%     verified vs public oracle; query/fault counts; OR
+%     PA+assembly: >=52/64 confident columns -> bounded 4^k brute force
+%     -> oracle-verified key (selftest 30/30, budget table)
+%  5B demo: glitch_only hang -> frozen state -> round inversion -> key,
+%     self-verified (IV||nonce), one faulted query; explicit
+%     state-observability threat model; instrument limitation stated
+%  5C barrier: why the round-11 band stayed empty; sim-validated solvers
+%     (DFA 15 f/col; assembly margins) as the methodology contribution
+
+\section{Methodology Traps in Profiled SCA}
+% T1: edge gate is prior-driven; T2: prior-only CNN + separating-nonce
+% picker = confident wrong convergence (hyp 3 vs true 0 case); T3:
+% fixed-key labels alias public nonce bits. All three with the concrete
+% numbers from our logs; floor-gating as the fix.
+
+\section{Related Work}
+% ascon-hardware-sca TVLA baselines; ASCON DFA (bit-flip, eprint 2023/1923,
+% Nakamura et al.); SIFA/SHFA line; CW305 glitching tutorials; debug-port
+% attack class for the observability demo framing.
+
+\section{Conclusion}
+% [MONDAY: one paragraph per outcome ladder]
+
+\section*{Artifact Availability}
+% capture/training/FI scripts, solvers, selftests, raw fault npz
+% (repo on request / anonymized for review)
+
+\end{document}
