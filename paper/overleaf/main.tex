@@ -65,35 +65,34 @@ Deep-Learning Side-Channel Analysis and Clock-Glitch Fault Injection}
 ASCON-128, the NIST SP~800-232 standard for lightweight
 authenticated encryption, is now being deployed in constrained
 FPGA systems where hardware-measured data on its leakage and
-fault behavior is still missing.
-We present a complete, software-verified evaluation platform
-built on a NewAE CW305 Artix-7 FPGA, measured through its
-on-chip power supply shunt by a ChipWhisperer-Husky scope at
-40\,MS/s against a 10\,MHz crypto clock, where every captured
-power trace is accepted only after its ciphertext and tag match
-a byte-exact software reference, and report three hardware-verified
-result classes on the unmasked NIST LWC ASCON-128 core:
-deep-learning power analysis recovers secret key bits from the
-first-round S-box at 28--35\% accuracy against a 16.7\% random
-baseline, with live on-board fine-tuning closing the profiling
-domain gap and a closed-loop adaptive attack recovering two key
-bits per column in 32 queries at 99.9\% confidence, an
-algorithmic divide-and-conquer path to full 128-bit assembly
-across all 64 columns being outlined, while repeating the same
-nonce 64 times raises the correct key hypothesis to rank-1 with
-94\% probability;
+fault behavior is still missing. We present a complete,
+software-verified evaluation platform built on a NewAE CW305
+Artix-7 FPGA, measured through its on-chip power supply shunt by
+a ChipWhisperer-Husky scope at 40\,MS/s against a 10\,MHz crypto
+clock, where every captured power trace is accepted only after
+its ciphertext and tag match a byte-exact software reference.
+We report three hardware-verified result classes on the unmasked
+NIST LWC ASCON-128 core. First, deep-learning power analysis
+recovers secret key bits from the first-round S-box at 28--35\%
+accuracy against a 16.7\% random baseline, with live on-board
+fine-tuning closing the profiling domain gap and a closed-loop
+adaptive attack recovering two key bits per column in 32 queries
+at 99.9\% confidence, an algorithmic divide-and-conquer path to
+full 128-bit assembly across all 64 columns being outlined,
+while repeating the same nonce 64 times raises the correct key
+hypothesis to rank-1 with 94\% probability. Second,
 clock-glitch fault injection produces clean, verified single-bit
 faults at round~11 of the permutation, each pinpointed to an
 exact column and bit position across 12 independent cases
 spanning 10 distinct state columns, and we characterize the
 data-selected fault placement structure that bounds differential
-fault analysis on this core;
-and five measurement traps that generated confident false results
-during this campaign are identified and documented, each with a
-reusable detection test.
+fault analysis on this core. Third, five measurement traps that
+generated confident false positives during this campaign are
+identified and documented, each with a reusable detection test.
 A masked-core comparison on the same platform confirms that
 first-order masking eliminates S-box leakage entirely across
-9{,}151 traces.
+9{,}151 traces. The full-key assembly across all 64 columns is
+the subject of ongoing work.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -426,13 +425,13 @@ Table~\ref{tab:datasets} lists the principal datasets used.
     \textbf{Dataset} & \textbf{Traces} &
     \textbf{Mode} & \textbf{Use} \\
     \midrule
-    prof16sc         & 6{,}000 & random key, M=32 & profiling \\
-    gain35\_10k      & 10{,}000 & random key & profiling \\
-    unmasked merged  & 6{,}243 & random key & S-box profiling \\
-    masked (main2)   & 9{,}151 & random key & masking control \\
-    main live        & 3{,}000 & fixed ramp key & artifact control \\
-    blind attack     & 6{,}000 & fixed random key & blind control \\
-    fault runs       & 400+   & fixed key, glitched & FI localization \\
+    S-box profiling (M=32) & 6{,}000 & random key, M=32 & profiling \\
+    S-box profiling (M=1)  & 10{,}000 & random key & profiling \\
+    Unmasked S-box         & 6{,}243 & random key & S-box profiling \\
+    Masked control         & 9{,}151 & random key & masking control \\
+    Fixed-key artifact     & 3{,}000 & fixed ramp key & artifact control \\
+    Blind attack           & 6{,}000 & fixed random key & blind control \\
+    Fault injection        & 400+   & fixed key, glitched & FI localization \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -739,13 +738,15 @@ placement function $f: \mathbb{Z}_2^{96} \rightarrow
 $f$ is deterministic (the same nonce always faults the same
 column), an attacker can pre-characterize a nonce set by
 capturing a small calibration batch, clustering nonces by their
-faulted column, and selecting one nonce per target column. With
+column), and selecting one nonce per target column. With
 the 12 localizations spanning 10 distinct columns, a calibration
-set of approximately 200 nonces is sufficient to cover all 64
-columns with high probability (birthday-paradox bound: $200^2 /
-(2 \cdot 64) \approx 313$ expected distinct columns, capped at
-64). This transforms the structural limitation into an
-actionable attack vector: the attacker trades a small
+set of approximately 200 nonces covers an expected 61 of 64
+columns (expected coverage: $64 \times (1 - (63/64)^{200})
+\approx 61.3$). For near-complete coverage the coupon-collector
+bound applies: approximately $64 \ln 64 \approx 266$ nonces for
+full coverage in expectation, rising to approximately 458 for
+95\% confidence. This transforms the structural limitation into
+an actionable attack vector: the attacker trades a small
 pre-characterization cost for full-column DFA coverage.
 
 %% ============================================================
