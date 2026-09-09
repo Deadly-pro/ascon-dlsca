@@ -39,9 +39,11 @@ BIT = os.path.join(ROOT, 'vivado_ascon', 'ascon_cw305_top.bit')
 # Target key (random, generated at script creation time)
 TARGET_KEY = 'a45f8bcdab3d569e1ee091e0d29f2ab7'
 
-# Known-good capture from the last working board session (git-tracked)
-KNOWN_H5 = os.path.join(ROOT, 'board_session', 'run_20260827_091330',
-                        'profiling.h5')
+# Known-good captures: fresh Sep-9 config-hunt runs verified 100/100 vs the
+# current oracle. The Aug-27 profiling.h5 predates the w32rev fix and does
+# NOT verify (0/200) — stale-era, unusable as training data.
+KNOWN_H5 = os.path.join(ROOT, 'board_session', 'run_pa_20260909_032325',
+                        'cfg_g30_10mhz_clkgen.h5')
 KNOWN_GAIN = 30
 KNOWN_MHZ = 10.0
 KNOWN_EXT = False
