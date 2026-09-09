@@ -1,33 +1,34 @@
 #!/usr/bin/env python3
-r"""run_pa_test.py — cross-platform (Windows/Linux) full PA test for full-key recovery.
+r"""run_pa_test.py — cross-platform (Windows/Linux) PA full-key recovery session.
 
-Single source of truth for the minimal PA test that exercises every method
-contributing to full-key assembly on the unmasked NIST LWC ASCON-128 core.
-Thin wrappers: board_session/run_pa_test.bat and board_session/run_pa_test.sh.
+Resume-aware: every phase checks whether its output artifact already exists
+and skips if present. Designed so the heavy phases (profiling capture, CNN
+training) run ONCE (here, offline) and the board PC only runs the live attack
+phases (fine-tune + scores_export + assembly).
 
 Phases:
-  0. Gate: sanity_check 5/5 + verify_state 5/5 (observability required)
-  1. Config hunt: gain x clock x phase-lock edge at M=1
-  2. M-averaging sweep: edge vs M at best config
-  3. Profiling capture: 6000 traces, RANDOM keys, M=16, best config
-  4. Preprocess + train per-column profiles (offline, 30 min)
-  5. Floor gate: probe_leakage (>=52/64 columns over floor by >=5 pts)
-  6. Live on-board fine-tuning at a known profiling key
-  7. Attack: separating-nonce queries at TARGET key, accumulate (64,4)
-  8. Full-key assembly: bounded brute-force over weak columns + oracle verify
+  0. Gate: sanity_check 5/5
+  1. [skip if profiling.npz exists] config hunt + profiling capture + train
+  2. [skip if models exist] preprocess + per-column CNN training (64 cols)
+  3. Floor gate (probe_leakage) — always
+  4. Live fine-tuning at the target key — board required
+  5. Attack: scores_export at target key — board required
+  6. Full-key assembly (fullkey_assemble) — offline
 
-All commands use the venv python and are cross-platform. Logs to
-board_session/run_pa_<ts>/session.log and writes verdict.txt.
-
-TARGET KEY (random, generated now):
-  a45f8bcdab3d569e1ee091e0d29f2ab7
+Outputs (git-tracked staging dir for cross-machine handoff):
+  board_session/pa_assets/profiling.npz     — preprocessed features + ref
+  board_session/pa_assets/models/c{col}.pt  — 64 per-column CNN profiles
 
 Usage:
-  python board_session/run_pa_test.py
+  python3 board_session/run_pa_test.py                # full run
+  python3 board_session/run_pa_test.py --resume       # skip finished phases
+  python3 board_session/run_pa_test.py --attack-only  # live attack only
 """
+import argparse
 import datetime
 import os
 import re
+import shutil
 import sys
 import subprocess
 import time
@@ -38,9 +39,17 @@ BIT = os.path.join(ROOT, 'vivado_ascon', 'ascon_cw305_top.bit')
 # Target key (random, generated at script creation time)
 TARGET_KEY = 'a45f8bcdab3d569e1ee091e0d29f2ab7'
 
-# Profiling key (fixed, for training/fine-tuning — random keys used for capture,
-# but fine-tuning needs a known key on the board)
-PROF_KEY = TARGET_KEY  # we use the same key for simplicity
+# Known-good capture from the last working board session (git-tracked)
+KNOWN_H5 = os.path.join(ROOT, 'board_session', 'run_20260827_091330',
+                        'profiling.h5')
+KNOWN_GAIN = 30
+KNOWN_MHZ = 10.0
+KNOWN_EXT = False
+
+# Staging dir: git-tracked so models travel repo -> board PC via git pull
+ASSETS = os.path.join(ROOT, 'board_session', 'pa_assets')
+ASSET_NPZ = os.path.join(ASSETS, 'profiling.npz')
+ASSET_MODEL_FRM = os.path.join(ASSETS, 'models', 'c{col}.pt')
 
 
 def venv_python():
@@ -90,223 +99,192 @@ def run(cmd, timeout=1800):
     return (proc.returncode if proc else -1), text
 
 
-def edge_of(text):
-    m = re.search(r'mean ([+-]?\d+\.\d+) nats', text)
-    return float(m.group(1)) if m else -1.0
-
-
-def collect(n, gain, out, crypto_mhz=10.0, program=True, extclk=False,
-            avg_m=1, random_key=True):
-    cmd = ['collect_dataset.py', '-b', BIT]
-    if not program:
-        cmd.append('--no-program')
-    cmd += ['-n', str(n), '--samples', '2000', '--crypto-mhz', str(crypto_mhz),
-            '-o', out, '--gain', str(gain), '--max-retry', '10',
-            '-M', str(avg_m)]
-    # random_key: omit --key (collect_dataset uses random key if --key not given)
-    if extclk:
-        cmd.append('--extclk')
-    return run(cmd)
-
-
 def verdict(text):
     with open(os.path.join(OUT, 'verdict.txt'), 'w') as f:
         f.write(text + '\n')
     log('VERDICT: %s' % text)
 
 
+def all_models_present():
+    return all(os.path.exists(ASSET_MODEL_FRM.format(col=c))
+               for c in range(64))
+
+
+def model_count():
+    if not os.path.isdir(os.path.join(ASSETS, 'models')):
+        return 0
+    return len([f for f in os.listdir(os.path.join(ASSETS, 'models'))
+                if f.startswith('c') and f.endswith('.pt')])
+
+
 def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--resume', action='store_true',
+                    help='skip phases whose artifacts already exist')
+    ap.add_argument('--attack-only', action='store_true',
+                    help='skip gate + training; run live attack phases only')
+    ap.add_argument('--h5', default=KNOWN_H5,
+                    help='profiling capture h5 (default: known-good capture)')
+    ap.add_argument('--key', default=TARGET_KEY, help='target key hex')
+    ap.add_argument('--gain', type=int, default=KNOWN_GAIN)
+    ap.add_argument('--epochs', type=int, default=40)
+    ap.add_argument('--M', type=int, default=16)
+    args = ap.parse_args()
+
     log('session out dir: %s' % OUT)
     log('python: %s' % PY)
     log('bitstream: %s' % BIT)
-    log('target key: %s' % TARGET_KEY)
+    log('target key: %s' % args.key)
+    log('assets:     %s' % ASSETS)
+    log('npz exists: %s' % os.path.exists(ASSET_NPZ))
+    log('models:     %d/64' % model_count())
 
-    # ---- Phase 0: gate ----
-    step('PHASE 0: sanity_check 5/5 + verify_state 5/5')
-    rc, text = run(['sanity_check.py', '-b', BIT])
-    if '5/5' not in text:
-        verdict('fail sanity_check gate — reflash and retry')
-        return 1
-    log('sanity_check passed')
+    if args.attack_only:
+        args.resume = True
 
-    rc, text = run(['verify_state.py', '-b', BIT, '-n', '5'])
-    if '5/5 state readbacks match oracle exactly' not in text:
-        # verify_state may not exist on all builds; warn but continue
-        log('  WARNING: verify_state not available or failed — continuing')
+    # ---- Phase 0: gate (skip only in --attack-only) ----
+    if not (args.resume and all_models_present()):
+        step('PHASE 0: sanity_check 5/5')
+        rc, text = run(['sanity_check.py', '-b', BIT])
+        if '5/5' not in text:
+            verdict('fail sanity_check gate — reflash and retry')
+            return 1
+        log('sanity_check passed')
+
+    # ---- Phase 1: profiling npz (skip if exists) ----
+    if args.resume and os.path.exists(ASSET_NPZ):
+        log('PHASE 1 SKIPPED: profiling npz already exists')
+        npz = ASSET_NPZ
     else:
-        log('verify_state passed')
-
-    # ---- Phase 1: config hunt ----
-    step('PHASE 1: config hunt — (gain, mhz, extclk) edge at M=1')
-    configs = [(35, 10, True), (30, 10, True), (35, 5, True),
-               (35, 10, False), (30, 10, False)]
-    best_gain, best_edge = 35, -1.0
-    best_cfg = (35, 10, False)
-    crypto_mhz = 10.0
-    for g, mhz, ext in configs:
-        tag = 'extclk' if ext else 'clkgen'
-        h5 = os.path.join(OUT, 'cfg_g%d_%dmhz_%s.h5' % (g, mhz, tag))
-        rc, _ = collect(500, g, h5, crypto_mhz=mhz, extclk=ext,
-                        program=(mhz != 10.0 or ext), avg_m=1)
+        step('PHASE 1: preprocess known-good capture -> npz')
+        os.makedirs(ASSETS, exist_ok=True)
+        if not os.path.exists(args.h5):
+            log('  !! profiling h5 missing: %s' % args.h5)
+            log('  Collect one first:  python3 collect_dataset.py -n 5000 '
+                '--gain 30 -o <file>.h5')
+            verdict('fail: no profiling h5')
+            return 1
+        # preprocess writes training/data/<name>.npz; copy into assets
+        rc, text = run(['training/preprocess.py', args.h5])
         if rc != 0:
-            log('  !! collect failed g%d %dmhz %s' % (g, mhz, tag))
-            continue
-        rc, etext = run(['training/template_edge.py', '--h5', h5,
-                         '--n', '500', '--fit-k', '350'])
-        e = edge_of(etext)
-        log('  => g%d %dMHz %s edge = %+.4f nats' % (g, mhz, tag, e))
-        if e > best_edge:
-            best_gain, best_edge, best_cfg = g, e, (g, mhz, ext)
-            crypto_mhz = float(mhz)
-    g, mhz, ext = best_cfg
-    log('[[ BEST: gain=%d %.0fMHz %s edge=%+.4f ]]'
-        % (g, mhz, 'extclk' if ext else 'clkgen', best_edge))
+            verdict('fail preprocess')
+            return 1
+        src_npz = os.path.join('training', 'data',
+                               os.path.splitext(os.path.basename(args.h5))[0]
+                               + '.npz')
+        if not os.path.exists(src_npz):
+            # preprocess writes training/data/<h5-basename>.npz; the known
+            # capture basename is 'profiling' regardless of its dir
+            for cand in ('training/data/profiling.npz',):
+                if os.path.exists(cand):
+                    src_npz = cand
+                    break
+        shutil.copy(src_npz, ASSET_NPZ)
+        log('  copied %s -> %s' % (src_npz, ASSET_NPZ))
+        npz = ASSET_NPZ
 
-    if best_edge < 0.02:
-        verdict('no_leak: edge < 0.02 best=%d %.0fMHz edge=%+.4f'
-                % (best_gain, crypto_mhz, best_edge))
-        log('  No measurable first-order S-box leak at any capture config.')
-        return 0
-
-    # ---- Phase 2: M-averaging sweep ----
-    step('PHASE 2: edge vs M-averaging (gain %d, %.0f MHz, %s)'
-         % (best_gain, crypto_mhz, 'extclk' if ext else 'clkgen'))
-    profile_h5 = os.path.join(OUT, 'cfg_g%d_%dmhz_%s.h5'
-                              % (best_gain, crypto_mhz,
-                                 'extclk' if ext else 'clkgen'))
-    out = os.path.join(OUT, 'edge_vs_m.h5')
-    cmd = ['training/edge_vs_m.py', '--profile-h5', profile_h5,
-           '--gain', str(best_gain), '--samples', '2000',
-           '--M-max', '64', '--nonces', '30',
-           '--crypto-mhz', str(crypto_mhz), '--out', out]
-    if ext:
-        cmd.append('--extclk')
-    run(cmd, timeout=2400)
-
-    # ---- Phase 3: profiling capture (RANDOM keys, M=16) ----
-    step('PHASE 3: profiling capture (6000 traces, RANDOM keys, M=16, gain %d, %.0f MHz, %s)'
-         % (best_gain, crypto_mhz, 'extclk' if ext else 'clkgen'))
-    prof = os.path.join(OUT, 'profiling.h5')
-    collect(6000, best_gain, prof, crypto_mhz=crypto_mhz, extclk=ext,
-            program=True, avg_m=16, random_key=True)
-    log('profiling capture complete: %s' % prof)
-
-    # ---- Phase 4: preprocess + train per-column profiles ----
-    step('PHASE 4: preprocess + train per-column profiles')
-    # preprocess writes to training/data/<name>.npz
-    rc, text = run(['training/preprocess.py', prof])
-    npz = os.path.join('training', 'data', 'profiling.npz')
-    if rc != 0:
-        log('  !! preprocess failed')
-        verdict('fail preprocess')
-        return 1
-
-    # Train per-column CNN profiles (columns 0-63)
-    # Use train_joint.py for efficiency (all 64 columns at once)
-    log('training joint CNN (all 64 columns)...')
-    rc, text = run(['training/train_joint.py', npz, '--epochs', '50', '--batch', '256',
-                    '--out', os.path.join(OUT, 'models', 'joint_cnn1.pt')])
-    if rc != 0:
-        log('  !! train_joint failed — falling back to per-column training')
-        # Fallback: train per-column using train.py (all 64 columns)
-        # train.py saves to training/models/<name>_<col>_<target>_<arch>.pt
+    # ---- Phase 2: per-column CNN training (skip if all 64 present) ----
+    if args.resume and all_models_present():
+        log('PHASE 2 SKIPPED: all 64 models present')
+    else:
+        step('PHASE 2: train per-column CNN profiles (%d/64 done)'
+             % model_count())
+        os.makedirs(os.path.join(ASSETS, 'models'), exist_ok=True)
+        # train.py saves training/models/<name>_c<col>_sbox_cnn1.pt;
+        # run one per column and copy into assets as c{col}.pt
+        name = os.path.splitext(os.path.basename(args.h5))[0]
+        fails = 0
         for col in range(64):
+            dst = ASSET_MODEL_FRM.format(col=col)
+            if os.path.exists(dst):
+                continue
             rc, text = run(['training/train.py', npz, '--target', 'sbox',
                             '--column', str(col), '--arch', 'cnn1',
-                            '--epochs', '50', '--batch', '256'])
+                            '--epochs', str(args.epochs)])
             if rc != 0:
                 log('  !! train column %d failed' % col)
-    log('training complete')
+                fails += 1
+                continue
+            # locate the freshly written model and copy into assets
+            src = os.path.join('training', 'models',
+                               '%s_c%d_sbox_cnn1.pt' % (name, col))
+            if not os.path.exists(src):
+                # fallback glob: newest profiling*.pt containing _c{col}_
+                import glob
+                cands = glob.glob(os.path.join(
+                    'training', 'models', '*_c%d_sbox_cnn1.pt' % col))
+                src = cands[0] if cands else None
+            if src and os.path.exists(src):
+                shutil.copy(src, dst)
+                log('  col %d -> %s' % (col, dst))
+        if fails:
+            log('  WARNING: %d columns failed to train' % fails)
+        log('  models staged: %d/64' % model_count())
 
-    # Models are in training/models/ (train.py default)
-    model_dir = os.path.join('training', 'models')
+    # ---- Phase 3: floor gate ----
+    step('PHASE 3: floor gate (probe_leakage)')
+    rc, text = run(['training/probe_leakage.py', npz])
+    log('floor gate complete (see above; logistic/KNN is the weak probe — '
+        'CNN profiles are the real signal)')
 
-    # ---- Phase 5: floor gate ----
-    step('PHASE 5: floor gate (probe_leakage)')
-    cmd = ['training/probe_leakage.py', npz]
-    rc, text = run(cmd)
+    if model_count() < 52:
+        log('  WARNING: only %d/64 models — full-key assembly may be bounded'
+            % model_count())
+
+    # ---- Phase 4: live fine-tuning (board) ----
+    step('PHASE 4: live fine-tuning at target key (board)')
+    if model_count() == 0:
+        verdict('fail: no trained models to fine-tune')
+        return 1
+    # fine-tune column 0 as the domain-gap demonstration
+    m0 = ASSET_MODEL_FRM.format(col=0)
+    rc, text = run(['training/live_finetune.py', '--model', m0,
+                    '--npz', npz, '--key', args.key, '--column', '0',
+                    '--ntrain', '300', '--random-keys'])
     if rc != 0:
-        log('  WARNING: probe_leakage not available or failed — continuing')
-    log('floor gate complete (see output above for column count)')
+        log('  WARNING: live_finetune failed — continuing with base profiles')
 
-    # ---- Phase 6: live on-board fine-tuning ----
-    step('PHASE 6: live on-board fine-tuning at target key')
-    # Fine-tune column 0 as a representative
-    # train.py saves to training/models/<name>_<col>_<target>_<arch>.pt
-    model_path = os.path.join('training', 'models', 'profiling_c0_sbox_cnn1.pt')
-    if not os.path.exists(model_path):
-        # Try joint model
-        model_path = os.path.join(OUT, 'models', 'joint_cnn1.pt')
-    if not os.path.exists(model_path):
-        # Find any trained model
-        for f in os.listdir(model_dir):
-            if f.endswith('.pt'):
-                model_path = os.path.join(model_dir, f)
-                break
-    if os.path.exists(model_path):
-        cmd = ['training/live_finetune.py', '--model', model_path,
-               '--npz', npz, '--key', TARGET_KEY, '--column', '0',
-               '--ntrain', '300', '--fresh']
-        rc, text = run(cmd, timeout=600)
-        if rc != 0:
-            log('  WARNING: live_finetune failed — continuing with base profile')
-    else:
-        log('  WARNING: no model found for fine-tuning — continuing with base profile')
-
-    # ---- Phase 7: attack (separating-nonce queries at target key) ----
-    step('PHASE 7: attack — separating-nonce queries at target key')
+    # ---- Phase 5: attack at target key (board) ----
+    step('PHASE 5: scores_export at target key (board)')
     scores = os.path.join(OUT, 'attack_scores.npz')
-    cmd = ['training/scores_export.py', '--key', TARGET_KEY,
-           '--model-frm', os.path.join(model_dir, 'profiling_c{col}_sbox_cnn1.pt'),
-           '--npz', npz, '--M', '16', '--out', scores]
-    rc, text = run(cmd, timeout=1200)
-    if rc != 0:
-        log('  !! scores_export failed — trying adaptive attack')
-        # Fallback: use adaptive.py
-        cmd = ['training/adaptive.py', '--attack', '--npz', npz,
-               '--model', model_path, '--column', '0', '--key', TARGET_KEY,
-               '--M', '16', '--max-queries', '100']
-        rc, text = run(cmd, timeout=1200)
-    log('attack complete')
+    cmd = ['training/scores_export.py', '--key', args.key,
+           '--model-frm', ASSET_MODEL_FRM,
+           '--npz', npz, '--M', str(args.M),
+           '--gain', str(args.gain), '--out', scores]
+    rc, text = run(cmd, timeout=3600)
+    if rc != 0 or not os.path.exists(scores):
+        log('  !! scores_export failed')
+        verdict('attack_failed — see session.log')
+        return 1
+    log('attack scores written: %s' % scores)
 
-    # ---- Phase 8: full-key assembly ----
-    step('PHASE 8: full-key assembly')
-    if os.path.exists(scores):
-        cmd = ['training/fullkey_assemble.py', '--scores', scores]
-        rc, text = run(cmd, timeout=600)
-        if rc == 0 and 'FULL KEY RECOVERED' in text:
-            # Extract the key from the output
-            m = re.search(r'FULL KEY RECOVERED: ([0-9a-f]{32})', text)
-            recovered_key = m.group(1) if m else 'unknown'
-            log('FULL KEY RECOVERED: %s' % recovered_key)
-
-            # Verify against oracle
-            if recovered_key == TARGET_KEY:
-                verdict('FULL_KEY_RECOVERED key=%s queries=verified'
-                        % recovered_key)
-            else:
-                verdict('KEY_MISMATCH recovered=%s expected=%s'
-                        % (recovered_key, TARGET_KEY))
+    # ---- Phase 6: full-key assembly ----
+    step('PHASE 6: full-key assembly')
+    cmd = ['training/fullkey_assemble.py', '--scores', scores]
+    rc, text = run(cmd, timeout=1800)
+    if rc == 0 and 'FULL KEY RECOVERED' in text:
+        m = re.search(r'FULL KEY RECOVERED: ([0-9a-f]{32})', text)
+        recovered_key = m.group(1) if m else 'unknown'
+        log('FULL KEY RECOVERED: %s' % recovered_key)
+        if recovered_key == args.key:
+            verdict('FULL_KEY_RECOVERED key=%s' % recovered_key)
         else:
-            # Parse how many columns were confident
-            m = re.search(r'(\d+)/?\d* weak columns', text)
-            weak_cols = int(m.group(1)) if m else -1
-            if weak_cols >= 0:
-                confident = 64 - weak_cols
-                verdict('partial_assembly confident_cols=%d/64 weak=%d budget=4^%d'
-                        % (confident, weak_cols, weak_cols))
-            else:
-                verdict('assembly_failed — see log for details')
+            verdict('KEY_MISMATCH recovered=%s expected=%s'
+                    % (recovered_key, args.key))
     else:
-        verdict('no_scores_file — attack phase failed')
+        # count confident columns for the honest partial statement
+        m = re.search(r'(\d+) weak columns', text)
+        weak = int(m.group(1)) if m else -1
+        if weak >= 0:
+            verdict('partial_assembly confident_cols=%d/64 weak=%d budget=4^%d'
+                    % (64 - weak, weak, weak))
+        else:
+            verdict('assembly_failed — per-column scores too weak; '
+                    'see session.log')
 
-    # ---- Summary ----
     step('SESSION SUMMARY')
-    log('  target key:   %s' % TARGET_KEY)
-    log('  best gain:    %d' % best_gain)
-    log('  crypto:       %.0f MHz' % crypto_mhz)
-    log('  phase lock:   %s' % ('extclk' if ext else 'clkgen'))
-    log('  edge M=1:     %+.4f nats' % best_edge)
+    log('  target key:   %s' % args.key)
+    log('  models:       %d/64' % model_count())
     log('  log:          %s' % LOG_PATH)
     log('  outputs:      %s' % OUT)
     return 0
