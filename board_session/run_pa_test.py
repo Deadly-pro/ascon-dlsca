@@ -44,11 +44,14 @@ PROF_KEY = TARGET_KEY  # we use the same key for simplicity
 
 
 def venv_python():
-    if os.name == 'nt':
-        p = os.path.join(ROOT, '.venv', 'Scripts', 'python.exe')
-    else:
-        p = os.path.join(ROOT, '.venv', 'bin', 'python')
-    return p if os.path.exists(p) else sys.executable
+    # WSL/Linux + Windows venv layouts; a Windows venv on WSL lives in
+    # .venv/Scripts/python.exe while os.name == 'posix'
+    for rel in (os.path.join('.venv', 'bin', 'python'),
+                os.path.join('.venv', 'Scripts', 'python.exe')):
+        p = os.path.join(ROOT, rel)
+        if os.path.exists(p):
+            return p
+    return sys.executable
 
 
 PY = venv_python()
