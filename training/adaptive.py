@@ -363,7 +363,7 @@ def validate_offline(args):
 
 def make_lq(args, col, key):
     """Board or sim query engine for one column (SimBoard is per-column)."""
-    if args.sim:
+    if getattr(args, 'sim', False):
         from sim_board import SimBoard
         return SimBoard(args.sim_h5, key, column=col, amp=args.sim_amp,
                         seed=args.seed, flat_p=args.sim_flat,
