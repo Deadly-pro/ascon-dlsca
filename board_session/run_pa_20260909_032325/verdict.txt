@@ -1,0 +1,1 @@
+no_leak: edge < 0.02 best=35 10MHz edge=-1.0000
