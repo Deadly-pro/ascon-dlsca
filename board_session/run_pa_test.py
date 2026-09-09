@@ -204,7 +204,8 @@ def main():
                     '--out', os.path.join(OUT, 'models', 'joint_cnn1.pt')])
     if rc != 0:
         log('  !! train_joint failed — falling back to per-column training')
-        # Fallback: train per-column
+        # Fallback: train per-column using train.py (all 64 columns)
+        # train.py saves to training/models/<name>_<col>_<target>_<arch>.pt
         for col in range(64):
             rc, text = run(['training/train.py', npz, '--target', 'sbox',
                             '--column', str(col), '--arch', 'cnn1',
@@ -212,6 +213,9 @@ def main():
             if rc != 0:
                 log('  !! train column %d failed' % col)
     log('training complete')
+
+    # Models are in training/models/ (train.py default)
+    model_dir = os.path.join('training', 'models')
 
     # ---- Phase 5: floor gate ----
     step('PHASE 5: floor gate (probe_leakage)')
@@ -224,9 +228,17 @@ def main():
     # ---- Phase 6: live on-board fine-tuning ----
     step('PHASE 6: live on-board fine-tuning at target key')
     # Fine-tune column 0 as a representative
-    model_path = os.path.join(OUT, 'models', 'joint_cnn1.pt')
+    # train.py saves to training/models/<name>_<col>_<target>_<arch>.pt
+    model_path = os.path.join('training', 'models', 'profiling_c0_sbox_cnn1.pt')
     if not os.path.exists(model_path):
-        model_path = os.path.join(OUT, 'models', 'profiling_c0_sbox_cnn1.pt')
+        # Try joint model
+        model_path = os.path.join(OUT, 'models', 'joint_cnn1.pt')
+    if not os.path.exists(model_path):
+        # Find any trained model
+        for f in os.listdir(model_dir):
+            if f.endswith('.pt'):
+                model_path = os.path.join(model_dir, f)
+                break
     if os.path.exists(model_path):
         cmd = ['training/live_finetune.py', '--model', model_path,
                '--npz', npz, '--key', TARGET_KEY, '--column', '0',
