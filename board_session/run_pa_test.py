@@ -253,7 +253,7 @@ def main():
     step('PHASE 7: attack — separating-nonce queries at target key')
     scores = os.path.join(OUT, 'attack_scores.npz')
     cmd = ['training/scores_export.py', '--key', TARGET_KEY,
-           '--model-dir', os.path.join(OUT, 'models'),
+           '--model-frm', os.path.join(model_dir, 'profiling_c{col}_sbox_cnn1.pt'),
            '--npz', npz, '--M', '16', '--out', scores]
     rc, text = run(cmd, timeout=1200)
     if rc != 0:
