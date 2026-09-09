@@ -24,8 +24,11 @@ Usage:
 """
 import numpy as np
 
-# ASCON-128 AEAD IV = to_bytes([1,0,(8<<4)+12]) + int_to_bytes(128,2) + to_bytes([16,0,0])
-IV = np.array([1, 0, 0x8C, 0x80, 0, 0x10, 0, 0], dtype=np.uint8)
+# ASCON-128 AEAD IV (NIST SP 800-232): to_bytes([k, rate*8, a, b, 0,0,0,0])
+# with k=128 (bits), rate=8 (bytes), a=12, b=6  -> 0x80400c0600000000.
+# Kept as 8 bytes in network (big-endian) order; le_u64 below reinterprets
+# them little-endian to match numpy's uint64 lane layout.
+IV = np.array([0x80, 0x40, 0x0C, 0x06, 0, 0, 0, 0], dtype=np.uint8)
 
 _POPCOUNT = np.zeros(32, dtype=np.uint8)
 for _v in range(32):
@@ -41,14 +44,28 @@ def le_u64(b):
     return out
 
 
+def be_u64(b):
+    """(N,8) uint8 big-endian bytes -> (N,) uint64 words (== ascon_ref)."""
+    b = b.astype(np.uint64)
+    out = b[:, 7].copy()
+    for i in range(1, 8):
+        out |= b[:, 7 - i] << (8 * i)
+    return out
+
+
 def load_state(keys, nonces):
-    """(N,16) keys, (N,16) nonces -> (N,5) uint64 initial state words."""
+    """(N,16) keys, (N,16) nonces -> (N,5) uint64 initial state words.
+
+    Mirrors ascon_ref.bytes_to_state: each 64-bit word is assembled
+    big-endian from its 8 bytes, in the same IV||K||N layout as the
+    board-verified oracle's ascon_initialize.
+    """
     S = np.empty((len(keys), 5), dtype=np.uint64)
-    S[:, 0] = le_u64(np.tile(IV[None, :], (len(keys), 1)))
-    S[:, 1] = le_u64(keys[:, 0:8])
-    S[:, 2] = le_u64(keys[:, 8:16])
-    S[:, 3] = le_u64(nonces[:, 0:8])
-    S[:, 4] = le_u64(nonces[:, 8:16])
+    S[:, 0] = be_u64(np.tile(IV[None, :], (len(keys), 1)))
+    S[:, 1] = be_u64(keys[:, 0:8])
+    S[:, 2] = be_u64(keys[:, 8:16])
+    S[:, 3] = be_u64(nonces[:, 0:8])
+    S[:, 4] = be_u64(nonces[:, 8:16])
     return S
 
 
@@ -116,7 +133,7 @@ def kadd_words_hw(keys, nonces):
     S = load_state(keys, nonces)
     for r in range(12):
         S = permutation_round(S, r)
-    S[:, 3] ^= le_u64(keys[:, 0:8])     # KADD: S[3] ^= key[0:8]
+    S[:, 3] ^= be_u64(keys[:, 0:8])     # KADD: S[3] ^= key[0:8]
     hw = np.empty((len(keys), 8), dtype=np.uint8)
     w = S[:, 3]
     for b in range(8):
@@ -249,8 +266,9 @@ def _self_test():
     hw = round1_sbox_hw(keys, nonces)
 
     # Reference: replicate ascon_ref init + round-0 constant + FULL S-box
-    ivb = ascon_ref.to_bytes([1, 0, (8 << 4) + 12]) + \
-        ascon_ref.int_to_bytes(128, 2) + ascon_ref.to_bytes([16, 0, 0])
+    # IV matches the board-verified oracle (Ascon-128): k=128, rate=8, a=12,
+    # b=6 -> to_bytes([128, 64, 12, 6, 0, 0, 0, 0])
+    ivb = ascon_ref.to_bytes([128, 64, 12, 6, 0, 0, 0, 0])
     bad = 0
     for i in range(n):
         S = ascon_ref.bytes_to_state(ivb + bytes(keys[i]) + bytes(nonces[i]))
@@ -284,9 +302,12 @@ def _self_test():
     assert kbad == 0
 
     # hypothesis_labels: for the true key bits, predicted class must equal truth
+    # True column-0 key bits = bit 0 of S1/S2 words under load_state's
+    # big-endian convention (S1 = key[0:8], S2 = key[8:16] as BE integers).
+    S0 = load_state(keys, nonces)
     true = np.zeros((n, 2), dtype=np.uint8)
-    true[:, 0] = (keys[:, 0] >> 0) & 1
-    true[:, 1] = (keys[:, 8] >> 0) & 1
+    true[:, 0] = (S0[:, 1] >> 0) & 1
+    true[:, 1] = (S0[:, 2] >> 0) & 1
     hyp = all_hypotheses()
     lab = hypothesis_labels(0, nonces, hyp)
     idx = np.all(hyp[None, :, :] == true[:, None, :], axis=2).argmax(axis=1)
