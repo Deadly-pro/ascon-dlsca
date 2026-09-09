@@ -86,6 +86,7 @@ def run(cmd, timeout=1800):
         proc = None
     for line in text.splitlines():
         LOG.write('    ' + line + '\n')
+        print('    ' + line, flush=True)
     return (proc.returncode if proc else -1), text
 
 
