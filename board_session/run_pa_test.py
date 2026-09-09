@@ -98,9 +98,8 @@ def collect(n, gain, out, crypto_mhz=10.0, program=True, extclk=False,
         cmd.append('--no-program')
     cmd += ['-n', str(n), '--samples', '2000', '--crypto-mhz', str(crypto_mhz),
             '-o', out, '--gain', str(gain), '--max-retry', '10',
-            '--avg-m', str(avg_m)]
-    if random_key:
-        cmd.append('--random-key')
+            '-M', str(avg_m)]
+    # random_key: omit --key (collect_dataset uses random key if --key not given)
     if extclk:
         cmd.append('--extclk')
     return run(cmd)
@@ -190,8 +189,9 @@ def main():
 
     # ---- Phase 4: preprocess + train per-column profiles ----
     step('PHASE 4: preprocess + train per-column profiles')
-    npz = os.path.join(OUT, 'profiling.npz')
-    rc, text = run(['training/preprocess.py', prof, '--out', npz])
+    # preprocess writes to training/data/<name>.npz
+    rc, text = run(['training/preprocess.py', prof])
+    npz = os.path.join('training', 'data', 'profiling.npz')
     if rc != 0:
         log('  !! preprocess failed')
         verdict('fail preprocess')
@@ -200,9 +200,8 @@ def main():
     # Train per-column CNN profiles (columns 0-63)
     # Use train_joint.py for efficiency (all 64 columns at once)
     log('training joint CNN (all 64 columns)...')
-    rc, text = run(['training/train_joint.py', npz, '--target', 'sbox',
-                    '--arch', 'cnn1', '--epochs', '50', '--batch', '256',
-                    '--out-dir', os.path.join(OUT, 'models')])
+    rc, text = run(['training/train_joint.py', npz, '--epochs', '50', '--batch', '256',
+                    '--out', os.path.join(OUT, 'models', 'joint_cnn1.pt')])
     if rc != 0:
         log('  !! train_joint failed — falling back to per-column training')
         # Fallback: train per-column
@@ -216,8 +215,7 @@ def main():
 
     # ---- Phase 5: floor gate ----
     step('PHASE 5: floor gate (probe_leakage)')
-    cmd = ['training/probe_leakage.py', '--npz', npz,
-           '--models-dir', os.path.join(OUT, 'models')]
+    cmd = ['training/probe_leakage.py', npz]
     rc, text = run(cmd)
     if rc != 0:
         log('  WARNING: probe_leakage not available or failed — continuing')
