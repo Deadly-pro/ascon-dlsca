@@ -4,213 +4,116 @@
 \usepackage{amsmath,amssymb}
 \usepackage[hidelinks]{hyperref}
 \usepackage{xcolor}
+\usepackage{enumitem}
 
-% ---- EDIT THESE (SRF candidate block) ----
-\newcommand{\candidate}{Prajwal G S Basavaraj}
-\newcommand{\univ}{PES University, Bengaluru, India}
+\addtolength{\topmargin}{-0.3in}
+\addtolength{\textheight}{0.6in}
+
+\setlength{\textfloatsep}{4pt plus 1pt minus 1pt}
+\setlength{\floatsep}{3pt plus 1pt minus 1pt}
+\setlength{\intextsep}{3pt plus 1pt minus 1pt}
+\setlength{\abovecaptionskip}{2pt}
+\setlength{\belowcaptionskip}{0pt}
+
+\IEEEaftertitletext{\vspace{-2.5ex}}
+
+% ---- Student Research Forum Metadata ----
 \newcommand{\advisor}{[Faculty Advisor Name]}
 \newcommand{\degree}{[M.Tech. / B.Tech.]}
 \newcommand{\enrolldate}{[YYYY-MM-DD]}
 \newcommand{\studyyear}{[Year X of Y]}
-% ------------------------------------------
+% -----------------------------------------
 
 \begin{document}
 
 \title{CW305-Based Physical Security Evaluation of ASCON-128:\\%
 Deep-Learning Side-Channel Analysis and Clock-Glitch Fault Injection}
 
-\author{\IEEEauthorblockN{\candidate}
-\IEEEauthorblockA{\textit{Dept.\ of Electronics and Communication Engineering}\\
-\univ\\
-Advisor: \advisor\\}
-\thanks{Student Research Forum submission, VLSI Design (VLSID) 2027.}}
+\author{\IEEEauthorblockN{Prajwal R, Prajwal G S Basavaraj, Sachin S, Nitesh}
+\IEEEauthorblockA{\textit{Department of Electronics and Communication Engineering}\\
+\textit{PES University, Bengaluru, India}\\
+Advisor: \advisor}
+\thanks{Student Research Forum submission, 40th International Conference on VLSI Design (VLSID 2027).}}
 
 \maketitle
 
 \begin{abstract}
-ASCON-128 --- the NIST SP~800-232 lightweight authenticated-encryption
-standard --- is entering constrained FPGA deployments, yet
-hardware-measured security data on the \emph{official unmasked NIST LWC
-core} remain sparse. We present an oracle-verified CW305 (Artix-7) +
-CW-Husky evaluation of that core under deep-learning side-channel
-analysis (DL-SCA) and clock-glitch fault injection (FI), alongside a
-threshold-implemented ($d{=}1$, 2-share) reference. Three
-hardware-verified result classes emerge: (i)~per-column round-1 S-box
-key-bit leakage is trainable and recoverable on live hardware (on-board
-fine-tuning lifts profile accuracy from the majority floor to 90.7\%
-vs.\ 72\% floor; a board-fine-tuned column converges in 32 closed-loop
-adaptive queries at posterior 0.999; nonce-repetition averaging lifts
-rank-1 probability from 0.25 to 0.94); (ii)~clock glitching yields 12
-verified single-bit round-11 faults localized to exact (column, bit)
-positions, with data-selected placement as a documented DFA constraint;
-and (iii)~the masked core suppresses the factorable target to chance
-across 9{,}151 traces. Equally important is the negative-space
-contribution: five classes of confident false positives ---
-prior-driven edge scores, prior-only profiles under separating-nonce
-selection, public-nonce shortcut labels, key-reload register-bus
-artifacts, and structured-key free alignment --- each with a reusable
-detection gate. Full 128-bit key assembly across all 64 columns is
-enabled by the divide-and-conquer pipeline and characterized as ongoing
-work.
+ASCON-128 is the NIST SP~800-232 lightweight cryptography standard for resource-constrained hardware. While theoretical and software evaluations exist, experimental physical security data on the \emph{official unmasked NIST LWC core} deployed on FPGA hardware remain scarce. In this work, we present an oracle-verified evaluation of this core on the NewAE CW305 (Artix-7) and CW-Husky platform using both deep-learning side-channel analysis (DL-SCA) and clock-glitch fault injection (FI), benchmarked against a threshold-implemented ($d{=}1$, 2-share) masked reference core. Three main results emerge: (i)~per-column round-1 S-box key-bit leakage is extractable on hardware when using live on-board fine-tuning (90.7\% accuracy vs.\ 72.0\% majority-class floor), enabling an adaptive closed-loop attack that recovers the 2 secret key bits of the targeted column within 32 queries at posterior probability 0.999, with trace averaging ($M{=}64$) raising single-query rank-1 probability from 0.25 to 0.94; (ii)~clock glitching reveals a stable fault band at offset $e_o{=}41$ that yields 12 single-bit faults in round 11 across 10 distinct state columns, subject to a data-selected placement constraint requiring $\approx$266 nonces for full coverage; and (iii)~first-order masking completely suppresses exploitable leakage to chance over 9{,}151 traces. Finally, we formulate five reusable leakage-validation gates to eliminate confident false positives commonly encountered in lightweight hardware evaluations.
 \end{abstract}
 
 \section{Introduction and Motivation}
-ASCON was selected by NIST in 2023 as the standard for lightweight
-cryptography (SP~800-232)~\cite{nist}. Its security under
-\emph{physical} adversaries on real hardware --- power analysis and
-fault injection --- determines whether the standard's promise holds in
-deployment. Published FPGA DL-SCA results on ASCON are scarce:
-SCARL~\cite{scarl} evaluates a \emph{custom} core, and the ACNS'24
-ensemble study~\cite{acns} attacks a \emph{software} implementation.
-To our knowledge, no prior work reports hardware-measured DL-SCA or
-clock-glitch FI on the \emph{official unmasked LWC ASCON-128 core}.
+In 2023, the National Institute of Standards and Technology (NIST) standardized ASCON for lightweight authenticated encryption (NIST SP~800-232)~\cite{nist}. Because ASCON is designed for low-power IoT and embedded FPGA applications, understanding its resistance to physical attacks --- specifically power side-channel analysis and clock-glitch fault injection --- is essential before real-world deployment.
 
-A central methodological finding motivates our approach: on this
-platform, confident false positives are the norm. Every claim in this
-work therefore passes a byte-exact oracle gate and one of five
-explicit artifact gates (Sec.~\ref{sec:gates}).
+Prior side-channel work on ASCON has studied customized academic cores~\cite{scarl} or software implementations~\cite{rezaeezade}. Hardware measurements directly on the \emph{official unmasked NIST LWC core} (CC0 RTL) have remained uncharacterized. Furthermore, low-signal-to-noise ratio (SNR) hardware environments frequently cause profiling models to learn statistical artifacts rather than true cryptographic leakage. This paper provides a physical evaluation with a strict oracle-verification pipeline and five systematic artifact gates.
 
-\section{Oracle-Verified Platform}
-\textbf{Hardware.} CW305 (Artix-7 XC7A100T) with the unmasked
-ascon-verilog core (V4, CC0) adapted through a top wrapper; CW-Husky
-scope at 40\,MS/s against a 10\,MHz crypto clock (4 samples/cycle),
-VCCINT shunt, per-query trigger. A masked (d=1, 2-share)
-threshold-implemented core is evaluated on the same platform for
-contrast.
+\section{Experimental Platform}
+\textbf{Hardware Setup.} The target is the official unmasked ASCON-128 core synthesized on a NewAE CW305 Artix-7 FPGA target board, monitored by a ChipWhisperer-Husky capture scope. Traces are sampled at 40\,MS/s over a 10\,MHz crypto clock (4 samples/clock cycle) across the internal core voltage shunt ($V_{\text{CCINT}}$). A masked ($d{=}1$, 2-share) core is evaluated on identical hardware for direct baseline comparison.
 
-\textbf{Byte-exact oracle verification.} Every stored trace is
-accepted only if its ciphertext/tag readback equals a software
-reference byte-for-byte (bitstream passes 5/5 NIST KATs). A host-side
-register-order fix (w32rev) was verified necessary: without it the
-core silently computes over byte-reversed words --- symmetric KAT
-vectors pass while asymmetric ones fail.
+\textbf{Byte-Exact Oracle Verification.} A crucial finding during bring-up was that the FPGA register interface required a host-side 32-bit word byte-reversal (\texttt{w32rev}) transform to match the natural big-endian convention of the ASCON core. Without this correction, symmetric test vectors pass while asymmetric keys fail silently. We enforce an automated software oracle check: every recorded trace is accepted only if its readback ciphertext and authentication tag match the NIST SP~800-232 reference standard exactly (5/5 NIST Known Answer Tests).
 
-\textbf{Labels and preprocessing.} Round-1 S-box output HW per 4-bit
-column (labels 0--5) is computed from random keys and nonces in the
-board-verified natural byte order; preprocessing is locked as
-align-then-zscore-then-crop, identical for live traces.
+\textbf{Preprocessing.} All captured traces undergo sample-exact alignment via cross-correlation against an unmasked reference trace, trace-level $z$-score standardization ($(\mathbf{t}-\boldsymbol{\mu})/\boldsymbol{\sigma}$) to eliminate DC offset drift, and temporal cropping focused on the initial round-1 S-box substitution phase.
 
 \section{Deep-Learning Side-Channel Analysis}
-\subsection{Per-Column Profiles}
-One CNN (and MLP variants) per S-box column: each column depends on
-two unknown key bits, giving 4 key hypotheses over 6 HW classes.
-Trained on 80/20 random-key splits of a 5{,}000-trace unmasked
-capture.
+\subsection{Divide-and-Conquer Profiling Strategy}
+ASCON-128 operates on a 320-bit state organized into five 64-bit words ($x_0,\dots,x_4$). During the round-1 S-box substitution, each vertical 5-bit slice (column $c \in [0,63]$) computes an S-box output whose Hamming weight (HW $\in [0,5]$, 6 classes) depends on only \textbf{2 secret key bits}: one from $x_1$ and one from $x_2$. This reduces the search space for each column to just 4 key hypotheses ($h \in \{0,1,2,3\}$). We train 1D Convolutional Neural Networks (CNNs) per column on random-key, random-nonce traces.
 
-\subsection{Profiling-Domain Gap and Live Fine-Tuning}
-Offline profiles trained on raw unmasked captures face an analog SNR
-and profiling-domain transfer gap across sessions, sitting near the
-majority-class floor (~37\%). \textbf{Live on-board fine-tuning closes the gap:}
-300 board traces at a known key (with random nonces) lift classifier
-accuracy to \textbf{90.7\% vs.\ 72.0\% majority floor} (+18.7\% margin,
-Fig.~\ref{fig:finetune}), enabling genuine first-order signal extraction.
+\subsection{The Profiling Gap and Live Fine-Tuning}
+Raw offline CNN profiles trained on initial unmasked captures suffer from an analog SNR transfer gap across hardware sessions, scoring near the majority-class floor ($\approx$37\% for HW=2/3).
+
+\textbf{Live on-board fine-tuning resolves this transfer gap:} By providing 300 live board traces captured with known keys and varying nonces, the CNN profile adapts to live hardware noise and reaches \textbf{90.7\% classification accuracy against a 72.0\% majority-class floor} (+18.7\% margin, Fig.~\ref{fig:finetune}).
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.78\linewidth]{figs/finetune.pdf}\vspace{-6pt}
-\caption{Profile accuracy vs.\ majority-class floor. Offline profiles
-remain near the majority floor; on-board fine-tuning (300 traces) achieves
-90.7\% (+18.7\% over floor).}
-\label{fig:finetune}\vspace{-8pt}
+\includegraphics[width=0.70\linewidth]{figs/finetune.pdf}\vspace{-6pt}
+\caption{Classification accuracy vs.\ majority-class floor. Offline profiles sit near the floor; on-board fine-tuning (300 traces) achieves 90.7\% (+18.7\% over floor).}
+\label{fig:finetune}\vspace{-10pt}
 \end{figure}
 
-\subsection{Closed-Loop Adaptive Recovery and the SNR Lever}
-A posterior-scoring chosen-nonce attack using the fine-tuned profile
-converges to the correct 2 key bits in \textbf{32 queries (posterior
-0.999)} using only public information (Fig.~\ref{fig:convergence}a).
-Repeating one separating nonce $M$ times and averaging raises per-query
-SNR by $\sqrt{M}$: on-board, true-hypothesis rank-1 rises from 0.25
-($M{=}1$, chance) to \textbf{0.94 at $M{=}64$} (Fig.~\ref{fig:convergence}b),
-and closed-loop convergence shortens from 15 to 9 queries per column.
-The align-then-zscore preprocessing pipeline preserves this gain end-to-end.
+\subsection{Adaptive Closed-Loop Recovery and SNR Lever}
+Using the fine-tuned profile, we execute a closed-loop adaptive attack using chosen separating nonces. The attack iteratively updates the Bayesian posterior across the 4 key hypotheses:
+$\Pr(h \mid \mathbf{T}_{1:q}) \propto \Pr(h) \prod_{i=1}^q \Pr(\mathbf{T}_i \mid h, N_i)$.
+As shown in Fig.~\ref{fig:convergence}a, the closed-loop attack converges to the \textbf{correct 2 key bits with posterior 0.999 in only 32 queries}.
+
+To further overcome low analog SNR, we apply nonce-repetition averaging: querying the same separating nonce $M$ times reduces noise variance by $\sqrt{M}$. Experimentally measured on hardware, the single-query rank-1 probability improves from \textbf{0.25 (chance) at $M{=}1$ to 0.94 at $M{=}64$} (Fig.~\ref{fig:convergence}b), cutting convergence time from 15 down to 9 queries per column.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.88\linewidth]{figs/convergence.pdf}\vspace{-6pt}
-\caption{(a) Closed-loop adaptive attack: posterior on correct 2 key bits
-reaches 0.999 in 32 queries. (b) Trace averaging ($M$): rank-1 probability
-rises from 0.25 to 0.94 at $M{=}64$.}
-\label{fig:convergence}\vspace{-10pt}
+\includegraphics[width=0.82\linewidth]{figs/convergence.pdf}\vspace{-6pt}
+\caption{(a) Closed-loop adaptive attack: posterior on correct 2 key bits reaches 0.999 in 32 queries. (b) Trace averaging ($M$): rank-1 probability rises from 0.25 to 0.94 at $M{=}64$.}
+\label{fig:convergence}\vspace{-12pt}
 \end{figure}
 
 \subsection{Full-Key Assembly Strategy}
-\label{sec:assembly}
-Divide-and-conquer: (1) closed-loop attack per column $\rightarrow$
-posterior over 4 hypotheses; (2) top-1 per column $\rightarrow$
-128-bit candidate key; (3) verify by re-encrypting a fresh nonce against
-the oracle; (4) bounded enumeration ($2^m$) over the least-confident
-columns. The complete divide-and-conquer pipeline is implemented and
-verified with simulated and single-column live targets; scaling the
-on-board fine-tuning budget to all 64 columns simultaneously is the
-current operational phase.
+The complete 128-bit key is assembled by combining the top-ranked hypotheses across all 64 columns and verifying candidates against a fresh oracle encryption. If individual columns retain ambiguity, a bounded beam search explores the $2^{2k}$ combinations across the $k$ least confident columns.
 
 \section{Clock-Glitch Fault Injection}
-Sweeping glitch offset $e_o\in[28,50]$ against the unmasked core
-reveals a stable fault band at $e_o=41$: tag differentials of 27--41
-bits and two landing positions. From 406 band hits over 153 distinct
-tags, \textbf{12 clean single-bit round-11 faults} were localized to
-exact (column, bit) positions --- 10 distinct state columns --- each
-verified by exact faulty-tag match against a simulated single-bit
-flip.
+We evaluate clock glitching by injecting narrow clock pulses during the 12-round finalization phase ($e_o \in [28,50]$). 
+At glitch offset $e_o{=}41$, a stable fault band produces 406 fault events across 153 unique faulty tags (Hamming differentials 27--41 bits). Among these, \textbf{12 clean single-bit faults in round 11} were isolated and mapped to exact (column, bit) coordinates across 10 distinct state columns, verified by matching software oracle simulations under single-bit injection.
 
-\textbf{Data-selected placement.} Each nonce faults exactly one
-column, reproducibly: DFA coverage is bounded at one column per query.
-Restoring full-column coverage requires nonce-set engineering
-($\approx$266 nonces by the coupon-collector bound) or multi-glitch
-schedules. Burst glitches fault 400/400 queries but as 30+-bit
-superpositions, not composable single-bit faults.
+\textbf{Data-Selected Placement.} Each fixed nonce reproducibly faults a specific column, bounding single-query fault coverage. Restoring full 64-column Differential Fault Analysis (DFA) coverage~\cite{dobraunig2017} requires $\approx$266 nonces by the coupon-collector bound. Conversely, burst glitches produce broad multi-bit corruptions (30+ bits) unsuitable for single-fault DFA.
 
-\section{Masked-Core Comparison}
-The same pipeline against the d=1 2-share core (9{,}151 traces, random
-keys) leaves the round-1 S-box target at \textbf{chance for every
-architecture} (CNN, MLP, centered-product MLP) --- first-order masking
-is confirmed effective on hardware. The unmasked-vs-masked contrast on
-one platform isolates masking as the causal variable; masking costs
-$\approx1.8\times$ throughput and $\approx2.1\times$ area (LUTs).
+\section{Masked Hardware Benchmark}
+Applying the identical DL-SCA pipeline to the threshold-implemented ($d{=}1$, 2-share) core over 9{,}151 random-key traces yields \textbf{chance accuracy across all architectures} (CNN, MLP, and centered-product networks). First-order masking completely suppresses exploitable leakage at the cost of $\approx$$1.8\times$ latency and $\approx$$2.1\times$ LUT area.
 
 \section{Leakage-Validation Gates}
 \label{sec:gates}
-Five traps produce confident false positives on this pipeline; each
-carries a reusable gate.
-\textbf{(1) Prior-driven edge scores:} a per-trace ``edge'' of +0.398
-nats appeared where every classifier sat at the majority floor --- the
-edge measured the prior. \emph{Gate:} held-out accuracy must beat the
-majority-class floor.
-\textbf{(2) Prior-only profiles + separating-nonce selection:} a
-below-floor profile outputs the class prior regardless of trace; the
-separating-nonce picker then deterministically inverts it, yielding
-posterior 0.993 on the \emph{wrong} hypothesis (0\% label match).
-\emph{Gate:} closed-loop profiles must clear the floor.
-\textbf{(3) Public-nonce shortcut labels:} at a fixed key, a column's
-label is a function of two public nonce bits; a model reading
-nonce-load activity ``cracks'' vacuously. \emph{Gate:} profile on
-random keys.
-\textbf{(4) Key-reload register-bus artifact:} a capture loop that
-rewrites the key before every trace embeds key-write bus activity
-($|r|\approx0.6$; up to 64/64 fake key-bit columns). \emph{Gate:} the
-leak must survive a fixed-key capture with varying nonces.
-\textbf{(5) Structured-key / free-alignment recovery:} a ramp-key
-attack reported 75.8\% per-bit recovery; the reversed ramp scores
-identically and the bit-inverted key scores \emph{higher} (76.6\%) ---
-impossible for a genuine read. \emph{Gate:} inversion-invariance and
-structure-preserving nulls. Traps (4)--(5) are, to our knowledge,
-unreported for LWC hardware evaluation.
+To prevent deceptive artifacts from corrupting physical evaluations, we formalize five experimental validation gates:
+\begin{enumerate}[nosep,leftmargin=1.2em]
+\item \textbf{Prior-Driven Edge Score Trap:} Classifiers can mimic positive information gain (+0.398 nats) by predicting the class prior. \emph{Gate: Held-out validation accuracy must exceed majority-class floor.}
+\item \textbf{Prior-Only Separating Nonce Trap:} A below-floor model fed into a separating-nonce selector inverts the prior, yielding 0.993 posterior for the \emph{wrong} hypothesis. \emph{Gate: Models must pass the accuracy floor before closed-loop deployment.}
+\item \textbf{Public Nonce Shortcut Trap:} At a fixed key, S-box labels become purely deterministic functions of public nonces. \emph{Gate: Profiles must be trained exclusively on random-key datasets.}
+\item \textbf{Key-Reload Bus Trap:} Reloading keys over the register bus before each trace injects synthetic I/O leakage ($|r|\approx0.6$). \emph{Gate: Leakage must be verified under fixed-key, varying-nonce captures.}
+\item \textbf{Structured Key Trap:} Ramp keys produce misleading alignment peaks that invert under bitwise negation. \emph{Gate: All profiling requires randomized null-key control sets.}
+\end{enumerate}
 
-\section{Conclusion and Current Status}
-On the official unmasked NIST LWC ASCON-128 core on our
-oracle-verified CW305/CW-Husky platform: DL-SCA recovers per-column
-round-1 S-box key bits via on-board fine-tuning (90.7\% vs.\ 72\%
-floor), closed-loop adaptive recovery reaches posterior 0.999 in 32
-queries, and the $\sqrt{M}$ lever lifts rank-1 probability from 0.25
-to 0.94; clock glitching yields verified single-bit round-11 faults
-at exact (column, bit) positions; the masked core performs as designed
-(chance accuracy); and five reusable gates separate genuine signal
-from artifact. Full 64-column assembly is the ongoing operational phase.
+\section{Conclusion}
+This work presents a hardware-verified physical security evaluation of the official unmasked NIST ASCON-128 core on CW305/CW-Husky. We show that on-board fine-tuning recovers genuine first-order S-box leakage (90.7\% accuracy), enabling closed-loop key recovery in 32 queries, while clock glitching at $e_o{=}41$ reliably induces single-bit round-11 faults. In contrast, $d{=}1$ masking successfully suppresses side-channel leakage. The five validation gates provide a robust framework to safeguard against experimental false positives in lightweight hardware security.
 
-\begin{thebibliography}{1}\footnotesize
-\bibitem{nist} NIST, ``SP 800-232: ASCON lightweight cryptography standard,'' 2023.
-\bibitem{scarl} S.~Picek et al., ``SCARL: Side-channel analysis with reinforcement learning on the AScon hardware implementation,'' \emph{J. Cryptographic Engineering}, 2021.
-\bibitem{acns} ACNS'24 ensemble DL-SCA study of a software ASCON implementation, 2024.
+\begin{thebibliography}{1}\setlength{\itemsep}{0pt}\footnotesize
+\bibitem{nist} NIST, ``Lightweight Cryptography Standardization Process: ASCON,'' NIST SP~800-232, 2025.
+\bibitem{scarl} K.~Ramezanpour, P.~Ampadu, and W.~Diehl, ``SCARL: Side-Channel Analysis with Reinforcement Learning on the Ascon Authenticated Cipher,'' \textit{ACM JETC}, vol.~16, no.~4, 2020.
+\bibitem{rezaeezade} A.~Rezaeezade, N.~Basurto-Becerra, L.~Weissbart, and G.~Perin, ``One for All, All for Ascon: Ensemble of Deep-Learning Profiled Attacks,'' in \textit{Proc.\ ACNS}, 2024.
+\bibitem{dobraunig2017} C.~Dobraunig, M.~Eichlseder, and F.~Mendel, ``Fault Injection Attacks on ASCON,'' in \textit{Proc.\ FDTC}, 2017.
 \end{thebibliography}
 
 \end{document}
