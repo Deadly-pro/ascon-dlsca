@@ -1,0 +1,61 @@
+{
+ "n": 5000,
+ "per_method": {
+  "raw": {
+   "mean_acc": 0.22534375,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 25,
+   "best_acc": 0.2488
+  },
+  "poi8": {
+   "mean_acc": 0.16830625,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 45,
+   "best_acc": 0.2056
+  },
+  "poi16": {
+   "mean_acc": 0.17529375,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 45,
+   "best_acc": 0.2036
+  },
+  "poi32": {
+   "mean_acc": 0.18267499999999998,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 24,
+   "best_acc": 0.204
+  },
+  "poiavg16": {
+   "mean_acc": 0.15797499999999998,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 30,
+   "best_acc": 0.2948
+  },
+  "poiavg32": {
+   "mean_acc": 0.14856250000000001,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 57,
+   "best_acc": 0.2588
+  },
+  "dwt4": {
+   "mean_acc": 0.1905,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 37,
+   "best_acc": 0.2108
+  },
+  "dwt6": {
+   "mean_acc": 0.17925625,
+   "mean_floor": 0.3751375,
+   "above_floor": 0,
+   "best_col": 30,
+   "best_acc": 0.2096
+  }
+ }
+}
