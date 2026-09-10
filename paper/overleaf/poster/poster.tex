@@ -1,0 +1,217 @@
+\documentclass[10pt]{article}
+\usepackage[paperwidth=33.1in,paperheight=23.4in,margin=0.7in]{geometry}  % A1 landscape
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{multicol}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+
+\setlist{nosep,leftmargin=1.1em}
+\setlength{\columnsep}{0.55in}
+\setlength{\columnseprule}{1pt}
+\renewcommand{\columnseprulecolor}{\color{blue!40}}
+\definecolor{accent}{RGB}{31,63,126}
+\definecolor{accent2}{RGB}{200,30,30}
+\definecolor{blockbg}{RGB}{238,244,252}
+
+\newcommand{\blockhead}[1]{%
+  \par\vspace{8pt}\noindent
+  \colorbox{accent}{\parbox{\dimexpr\linewidth-12pt\relax}{%
+    \vspace{4pt}\hspace{6pt}{\Large\bfseries\color{white}#1}\\[4pt]}}%
+  \par\vspace{6pt}}
+
+\newcommand{\takeaway}[1]{%
+  \par\vspace{8pt}\noindent
+  \fcolorbox{accent}{blockbg}{\parbox{\dimexpr\linewidth-14pt\relax}{%
+    \vspace{6pt}\hspace{4pt}{\large\bfseries\color{accent}Take-home:} #1\vspace{6pt}}}}
+
+\setlength{\parskip}{4pt}
+
+\begin{document}
+% ================= TITLE BANNER =================
+\begin{center}
+\colorbox{accent}{\parbox{0.97\textwidth}{%
+  \centering\vspace{14pt}
+  {\Huge\bfseries\color{white}
+   Physical Security Evaluation of ASCON-128:\\[6pt]
+   Deep-Learning Side-Channel Analysis and Clock-Glitch Fault Injection}\\[12pt]
+  {\Large\color{white!90!black}
+   Prajwal R \quad$\bullet$\quad Prajwal G S Basavaraj \quad$\bullet$\quad
+   Sachin S \quad$\bullet$\quad Nitesh}\\[5pt]
+  {\large\color{white!90!black}
+   Dept.\ of Electronics and Communication Engineering, PES University, Bengaluru, India}\\[4pt]
+  {\large\color{white!90!black}\textit{VLSID 2027 --- Student Research Forum}}\vspace{12pt}
+}}
+\end{center}
+\vspace{6pt}
+
+% ================= CONTRIBUTIONS BOX =================
+\begin{center}
+\fcolorbox{accent}{blockbg}{\parbox{0.95\textwidth}{%
+  \vspace{8pt}
+  {\Large\bfseries\color{accent}Contributions}\par\vspace{4pt}
+  \begin{itemize}[leftmargin=1.4em, itemsep=3pt]
+  \item \textbf{First hardware-measured DL-SCA + clock-glitch FI} on the
+    \emph{official unmasked NIST LWC ASCON-128 core} (ascon-verilog V4) on
+    CW305/CW-Husky --- prior FPGA work attacked custom cores or software
+    implementations only.
+  \item \textbf{Per-column key-bit recovery demonstrated}: 42.7\% mean
+    key-rank top-1 vs 25\% chance across all 64 S-box columns; closed-loop
+    adaptive recovery at posterior 0.999 in 32 queries.
+  \item \textbf{Five leakage-validation gates} separating genuine
+    side-channel signal from five classes of confident false positives ---
+    two artifact classes unreported for LWC hardware.
+  \end{itemize}\vspace{8pt}
+}}
+\end{center}
+\vspace{6pt}
+
+\begin{multicols}{3}
+
+% ============================================================
+% COLUMN 1 — WHY + HOW
+% ============================================================
+\blockhead{Why ASCON-128 on Real Hardware?}
+ASCON-128 is the NIST SP~800-232 lightweight cryptography standard,
+entering constrained FPGA deployments. Its security under
+\emph{physical} adversaries --- power analysis and fault injection ---
+determines whether the standard's promise holds in the field.
+Published FPGA attacks evaluate \emph{custom} ASCON cores (SCARL) or
+\emph{software} implementations (ACNS'24 ensemble) --- never the
+official unmasked LWC core. We measure that core directly.
+
+\blockhead{Oracle-Verified Testbed}
+\centering
+\includegraphics[width=0.96\linewidth]{figs/testbed.pdf}\par
+\vspace{4pt}
+\begin{itemize}
+\item CW305 Artix-7 + CW-Husky, 40\,MS/s vs 10\,MHz crypto clock (4
+  samples/cycle), VCCINT shunt, per-query trigger.
+\item \textbf{Byte-exact oracle gate:} every stored trace accepted only
+  when its ct/tag readback matches a software reference (5/5 NIST
+  KATs). Kills misconfigured-target errors before they poison
+  datasets.
+\item Masked (d=1, 2-share) reference core on the same platform ---
+  the unmasked-vs-masked contrast isolates masking as the causal
+  variable.
+\end{itemize}
+
+\blockhead{DL-SCA Setup: Divide-and-Conquer}
+One CNN profile per S-box column: each of the 64 columns carries
+\textbf{2 unknown key bits} $\Rightarrow$ 4 hypotheses per column.
+Train on 5{,}000 random-key traces (80/20 split), HW labels 0--5.
+Random keys are essential: at a fixed key the column label is a
+function of two \emph{public} nonce bits (see Gates, trap 3).
+
+\columnbreak
+
+% ============================================================
+% COLUMN 2 — DL-SCA RESULTS
+% ============================================================
+\blockhead{Result 1: Every Column Leaks}
+\centering
+\includegraphics[width=0.98\linewidth]{figs/keyrank.pdf}\par
+\vspace{4pt}
+\begin{itemize}
+\item Held-out random-key traces: key-rank top-1 \textbf{42.7\% mean
+  vs 25\% chance}; \textbf{all 64 columns} above chance, none below
+  30\%. First-order, real, and per-column.
+\item Naive single-trace top-1 assembly reaches 37/128 bits ---
+  accumulation (below), not single traces, is the recovery path.
+\end{itemize}
+
+\blockhead{Result 2: The Profiling-Domain Gap}
+Offline profiles transfer poorly to live board sessions ---
+unfine-tuned columns score at chance on-board. \textbf{Live
+fine-tuning fixes it:} 300 board traces at a known key raise training
+accuracy to 90.7\% (vs 72\% majority floor), and the fine-tuned column
+recovers \emph{correct} bits at M=1 while unfine-tuned columns sit at
+chance.
+
+\blockhead{Result 3: Closed-Loop Recovery + SNR Lever}
+\centering
+\includegraphics[width=0.98\linewidth]{figs/convergence.pdf}\par
+\vspace{4pt}
+\begin{itemize}
+\item Posterior-scoring chosen-nonce attack converges to the correct
+  hypothesis in \textbf{32 queries (posterior 0.999)} --- public
+  information only.
+\item Nonce-repetition averaging: repeating one separating nonce $M$
+  times lifts true-hyp rank-1 from \textbf{0.25 (chance) to 0.94} at
+  M=64; convergence shortens 15$\rightarrow$9 queries/column.
+\item Full 128-bit assembly: divide-and-conquer over columns + bounded
+  enumeration of least-confident columns, verified by re-encryption.
+  \textbf{Ongoing work} --- the pipeline is complete; the remaining
+  gap is on-board fine-tuning budget, not information content.
+\end{itemize}
+
+\takeaway{The unmasked NIST core leaks its key bits column-by-column;
+$\sqrt{M}$ averaging and on-board fine-tuning are the levers that turn
+weak per-trace signal into confident recovery.}
+
+\columnbreak
+
+% ============================================================
+% COLUMN 3 — FI + COUNTERMEASURES + GATES
+% ============================================================
+\blockhead{Clock-Glitch Fault Injection}
+\centering
+\includegraphics[width=0.98\linewidth]{figs/glitch_sweep.pdf}\par
+\vspace{2pt}
+\includegraphics[width=0.98\linewidth]{figs/fault_map.pdf}\par
+\vspace{4pt}
+\begin{itemize}
+\item A stable fault band at $e_o{=}41$ (width 67): 406 band hits over
+  153 distinct tags; differentials 27--41 bits.
+\item \textbf{12 clean single-bit round-11 faults} localized to exact
+  (column, bit) --- 10 distinct state columns --- each verified by
+  exact faulty-tag match under simulated single-bit flip.
+\item \textbf{Data-selected placement:} each nonce faults exactly one
+  column, reproducibly $\Rightarrow$ DFA coverage bounded at one
+  column/query. Nonce-set engineering ($\approx$266 nonces,
+  coupon-collector bound) restores coverage.
+\item Burst glitches: 400/400 faulted but multi-bit (30+ bits) --- not
+  composable.
+\end{itemize}
+
+\blockhead{Masked Core (d=1, 2-share)}
+Same pipeline, 9{,}151 traces: S-box target at \textbf{chance for
+every architecture}. First-order masking works; cost $\approx
+1.8\times$ throughput, $2.1\times$ LUTs.
+
+\blockhead{Five Leakage-Validation Gates}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{0.30\linewidth}p{0.32\linewidth}p{0.32\linewidth}@{}}
+\toprule
+\textbf{Artifact trap} & \textbf{Failure mode} & \textbf{Gate} \\
+\midrule
+1. Prior-driven ``edge'' & edge measures the class prior, not leakage
+& held-out acc $>$ majority floor \\
+2. Prior-only profile + separating-nonce picker & 0.993 posterior on
+the \emph{wrong} hypothesis & profiles must clear the floor \\
+3. Public-nonce shortcut & model reads nonce-load activity, not key
+bits & train on random keys only \\
+4. Key-reload bus artifact & $|r|\approx0.6$ fake leakage from
+key-writes; 64/64 fake columns & survive fixed-key, varying nonces \\
+5. Structured-key alignment & ramp key fakes 75.8\% recovery;
+inverted key scores higher & inversion-invariance + null controls \\
+\bottomrule
+\end{tabular}\par\vspace{4pt}
+Traps 4--5 are, to our knowledge, \textbf{unreported} for LWC hardware
+evaluation.
+
+\blockhead{References}
+{\small
+[1] NIST, SP 800-232: ASCON Lightweight Cryptography Standards, 2023.
+
+[2] S.~Picek et al., ``SCARL,'' \emph{J.\ Cryptographic Engineering}, 2021.
+
+[3] Rezaeezade et al., ``One for All, All for Ascon,'' \emph{ACNS}, 2024 (ePrint 2023/1922).
+}
+
+\end{multicols}
+\end{document}
