@@ -1,0 +1,13 @@
+{
+ "n": 5000,
+ "per_method": {
+  "mia": {
+   "mean_acc": 0.1901875,
+   "mean_floor": 0.37564375000000005,
+   "cols_above_floor5": 0,
+   "best_col": 20,
+   "best_acc": 0.2856,
+   "elapsed_s": 88.3
+  }
+ }
+}

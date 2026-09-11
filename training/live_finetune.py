@@ -88,7 +88,10 @@ def main():
     ap.add_argument('--out', default=None, help='output *.pt (default: <model>_liveft.pt)')
     ap.add_argument('--bitstream',
                     default=os.path.join(ROOT, 'vivado_ascon', 'ascon_cw305_top.bit'))
-    ap.add_argument('--gain', type=int, default=-2)
+    ap.add_argument('--gain', type=int, default=50,
+                    help='scope gain dB (Husky: pick_gain said USE 50; CW-Lite '
+                         'used -2. Flat-capture loops are almost always a '
+                         'gain mismatch)')
     ap.add_argument('--offset', type=int, default=700)
     ap.add_argument('--std-floor', type=float, default=0.001)
     ap.add_argument('--sim', action='store_true',

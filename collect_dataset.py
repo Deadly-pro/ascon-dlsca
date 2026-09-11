@@ -76,6 +76,9 @@ def main():
     ap.add_argument('--no-program', action='store_true')
     ap.add_argument('--crypto-mhz', type=float, default=10.0,
                     help='crypto clock MHz (PLL1)')
+    ap.add_argument('--fs', type=float, default=40.0,
+                    help='ADC sample rate in MS/s (Husky supports up to 200; '
+                         '40 = 4 samples/cycle at 10 MHz crypto, 200 = 20)')
     ap.add_argument('--extclk', action='store_true',
                     help='lock ADC to crypto clock (phase-coherent, Husky only)')
     ap.add_argument('--pin-nb8', type=lambda s: int(s, 0), default=None,
@@ -102,10 +105,12 @@ def main():
 
     from scope_config import configure_scope, scope_model_name, firmware_note
     scope = configure_scope(gain=args.gain, samples=args.samples,
-                            offset=args.offset, sample_rate=40e6,
+                            offset=args.offset, sample_rate=args.fs * 1e6,
                             extclk=args.extclk,
                             crypto_hz=args.crypto_mhz*1e6)
-    print(f'[+] scope      : {scope_model_name(scope)}')
+    print(f'[+] scope      : {scope_model_name(scope)}  '
+          f'fs={args.fs:.0f} MS/s  crypto={args.crypto_mhz:.1f} MHz  '
+          f'({args.fs/args.crypto_mhz:.1f} samples/cycle)')
 
     traces, keys, nonces, cts = [], [], [], []
     verify_fails = 0
@@ -202,7 +207,7 @@ def main():
         f.create_dataset('nonces', data=np.frombuffer(b''.join(nonces), np.uint8).reshape(-1, 16))
         f.create_dataset('ciphertexts', data=np.frombuffer(b''.join(cts), np.uint8).reshape(-1, 16))
         f.attrs['adc_samples'] = args.samples
-        f.attrs['fs_hz'] = 40e6
+        f.attrs['fs_hz'] = args.fs * 1e6
         f.attrs['crypto_clk_hz'] = crypto_freq
         f.attrs['gain_db'] = args.gain
         f.attrs['gain_note'] = 'programmable + ~20 dB fixed external'

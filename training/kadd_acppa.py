@@ -206,7 +206,10 @@ def main():
     ap.add_argument('--sim-h5', default=os.path.join(ROOT, 'Dataset',
                                                      'main_unmasked_merged.h5'))
     ap.add_argument('--sim-amp', type=float, default=1.0)
-    ap.add_argument('--gain', type=int, default=-2)
+    ap.add_argument('--gain', type=int, default=50,
+                    help='scope gain dB (Husky: pick_gain said USE 50; CW-Lite '
+                         'used -2. Flat-capture loops are almost always a '
+                         'gain mismatch)')
     ap.add_argument('--offset', type=int, default=700)
     ap.add_argument('--std-floor', type=float, default=0.001)
     args = ap.parse_args()

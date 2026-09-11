@@ -70,7 +70,7 @@ class LiveQuery:
         self.key = bytes(key)
         self.t.loadEncryptionKey(self.key)
 
-    def query(self, nonce, _strikes=0):
+    def query(self, nonce, _strikes=0, _flat_streak=[0]):
         """One adaptive query: (nonce 16 bytes) -> (trace, ciphertext+tag).
 
         Returns (None, None) if the capture timed out or came back flat
@@ -93,7 +93,15 @@ class LiveQuery:
                 return self.query(nonce, _strikes + 1)
             return None, None
         if trace.std() < self.std_floor:
+            _flat_streak[0] += 1
+            if _flat_streak[0] >= 30:
+                raise RuntimeError(
+                    f'{_flat_streak[0]} consecutive flat captures — almost '
+                    f'certainly a GAIN MISMATCH (Husky needs ~+50 dB, '
+                    f'CW-Lite ~-2; current setting is likely far too low). '
+                    f'Fix --gain and rerun; see pick_gain.py.')
             return None, None
+        _flat_streak[0] = 0
         ct = bytes(self.t.readOutput())
         return trace, ct
 
