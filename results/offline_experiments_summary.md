@@ -23,6 +23,15 @@ the traces integrated over one clock cycle (8 samples).
 | 1 bit | per-bit switching, 320 bits × 12 rounds | \|r\| 0.068–0.097 vs null 0.091–0.111 | 0/3840, Holm p = 1.0000 |
 | 320 bits, joint | ridge stochastic model, 5-fold CV | R² ≈ null in all 12 rounds | no predictive power |
 
+On the stochastic row: the *absolute* held-out R² is negative (≈ −0.19 to
+−0.26 against a null mean of ≈ −0.23). That is an artefact of fitting 320
+regressors on ~1700 training traces — the model generalizes worse than the
+mean regardless of signal. The meaningful statistic is the **difference from
+the permutation null**, which is ≈ 0 in every round. Strengthening the ridge,
+standardizing features on train-fold statistics, and filtering near-constant
+bits all left the comparison unchanged. So: no predictive power, but do not
+quote the absolute R² as if it measured anything.
+
 **The aggregate is measurable; nothing smaller than the aggregate is.**
 
 The winner is scattered at every granularity — 12/12 distinct best columns,
