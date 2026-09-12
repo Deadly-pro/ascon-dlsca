@@ -32,6 +32,26 @@ of a *single* predictor. The family actually tested is up to
 
 ## 1. Corrected arithmetic
 
+**Verified structure (`training/verify_lightcone.py`).** The toggle at
+(word *w*, position *j*) depends on the key bits at positions
+
+    p in { j , (j + r1_w) mod 64 , (j + r2_w) mod 64 }
+    r1/r2 by word: (19,28) (61,39) (1,6) (10,17) (7,41)
+
+**Sign matters:** `linear_diffusion` uses `_rotr(x,r) = (x>>r)|(x<<(64-r))`, so
+bit *j* of the output depends on bit *(j+r)* of the input — the cone runs in
+the **plus** direction. My first version used minus; the check failed on its
+first run, which is precisely why the check was written before the board run.
+
+The empirical check flips each of the 128 key bits and records which change the
+predictor. Result: **the predicted 6-bit cone is always a superset of the true
+cone** (7/7 predictors, nothing missing). Some bits are structurally in the cone
+but functionally inert for a given output bit (3-5 of the 6 matter, constant
+under 10x more nonces), so the 2^6 search is slightly redundant but always
+contains the truth. The redundancy is harmless — overlapping predictors cover
+the inert bits, which is part of why the BP pooling step (section 5) is the
+right second move.
+
 Measured inputs: aggregate net-HD correlation `rho_agg = 0.55` (unsmoothed,
 round 1), `sigma_agg = 8.726`, single toggle bit `sigma = 0.5`.
 
