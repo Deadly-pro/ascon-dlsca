@@ -1,0 +1,107 @@
+{
+ "h5": "cfg_g35_10mhz_clkgen.h5",
+ "N": 223,
+ "T": 2000,
+ "M": 1,
+ "fs_hz": 40000000.0,
+ "crypto_clk_hz": 5000000.0,
+ "smoothed_samples": 4,
+ "predictors": [
+  {
+   "name": "round4_hd",
+   "max_abs_r": 0.48406112155494113,
+   "peak_sample": 130,
+   "peak_time_us": 3.25
+  },
+  {
+   "name": "CTRL_key_hw",
+   "max_abs_r": 0.47928322471716567,
+   "peak_sample": 207,
+   "peak_time_us": 5.175
+  },
+  {
+   "name": "round1_hd",
+   "max_abs_r": 0.45669835392667496,
+   "peak_sample": 110,
+   "peak_time_us": 2.75
+  },
+  {
+   "name": "round10_hd",
+   "max_abs_r": 0.3860187549045617,
+   "peak_sample": 178,
+   "peak_time_us": 4.45
+  },
+  {
+   "name": "round2_hd",
+   "max_abs_r": 0.38242812396282244,
+   "peak_sample": 114,
+   "peak_time_us": 2.8499999999999996
+  },
+  {
+   "name": "round7_hd",
+   "max_abs_r": 0.3823627096740431,
+   "peak_sample": 154,
+   "peak_time_us": 3.8500000000000005
+  },
+  {
+   "name": "round3_hd",
+   "max_abs_r": 0.37757622958875425,
+   "peak_sample": 126,
+   "peak_time_us": 3.15
+  },
+  {
+   "name": "round6_hd",
+   "max_abs_r": 0.3681152841085673,
+   "peak_sample": 146,
+   "peak_time_us": 3.6500000000000004
+  },
+  {
+   "name": "round11_hd",
+   "max_abs_r": 0.36678888557010875,
+   "peak_sample": 186,
+   "peak_time_us": 4.65
+  },
+  {
+   "name": "round9_hd",
+   "max_abs_r": 0.3538424129955468,
+   "peak_sample": 170,
+   "peak_time_us": 4.25
+  },
+  {
+   "name": "round5_hd",
+   "max_abs_r": 0.33533722532094007,
+   "peak_sample": 142,
+   "peak_time_us": 3.55
+  },
+  {
+   "name": "round12_hd",
+   "max_abs_r": 0.3277901587939136,
+   "peak_sample": 198,
+   "peak_time_us": 4.95
+  },
+  {
+   "name": "round8_hd",
+   "max_abs_r": 0.26009610807387906,
+   "peak_sample": 166,
+   "peak_time_us": 4.15
+  },
+  {
+   "name": "CTRL_nonce_hw",
+   "max_abs_r": 0.18431281108080524,
+   "peak_sample": 58,
+   "peak_time_us": 1.4500000000000002
+  },
+  {
+   "name": "total_hd",
+   "max_abs_r": 0.15708929976813754,
+   "peak_sample": 110,
+   "peak_time_us": 2.75
+  }
+ ],
+ "null": {
+  "mean": 0.24455824646047467,
+  "p999": 0.3499286277914797,
+  "max": 0.35121508148469677,
+  "n_perm": 300
+ }
+}

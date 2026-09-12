@@ -1,0 +1,107 @@
+{
+ "h5": "profiling.h5",
+ "N": 5000,
+ "T": 1200,
+ "M": 1,
+ "fs_hz": 40000000.0,
+ "crypto_clk_hz": 10000000.0,
+ "smoothed_samples": 4,
+ "predictors": [
+  {
+   "name": "CTRL_key_hw",
+   "max_abs_r": 0.4822630239804355,
+   "peak_sample": 82,
+   "peak_time_us": 2.05
+  },
+  {
+   "name": "CTRL_nonce_hw",
+   "max_abs_r": 0.12761882284865783,
+   "peak_sample": 22,
+   "peak_time_us": 0.55
+  },
+  {
+   "name": "total_hd",
+   "max_abs_r": 0.05451075067231721,
+   "peak_sample": 607,
+   "peak_time_us": 15.174999999999999
+  },
+  {
+   "name": "round8_hd",
+   "max_abs_r": 0.04534207473455281,
+   "peak_sample": 814,
+   "peak_time_us": 20.35
+  },
+  {
+   "name": "round11_hd",
+   "max_abs_r": 0.04179326130328569,
+   "peak_sample": 774,
+   "peak_time_us": 19.349999999999998
+  },
+  {
+   "name": "round10_hd",
+   "max_abs_r": 0.03958269834805543,
+   "peak_sample": 567,
+   "peak_time_us": 14.175
+  },
+  {
+   "name": "round9_hd",
+   "max_abs_r": 0.03902842828563948,
+   "peak_sample": 1034,
+   "peak_time_us": 25.85
+  },
+  {
+   "name": "round1_hd",
+   "max_abs_r": 0.035629552669240123,
+   "peak_sample": 93,
+   "peak_time_us": 2.325
+  },
+  {
+   "name": "round4_hd",
+   "max_abs_r": 0.0344396886483576,
+   "peak_sample": 989,
+   "peak_time_us": 24.725
+  },
+  {
+   "name": "round7_hd",
+   "max_abs_r": 0.03310194061721234,
+   "peak_sample": 165,
+   "peak_time_us": 4.125
+  },
+  {
+   "name": "round6_hd",
+   "max_abs_r": 0.03194673950744275,
+   "peak_sample": 1024,
+   "peak_time_us": 25.599999999999998
+  },
+  {
+   "name": "round2_hd",
+   "max_abs_r": 0.03088629602940643,
+   "peak_sample": 683,
+   "peak_time_us": 17.075000000000003
+  },
+  {
+   "name": "round12_hd",
+   "max_abs_r": 0.030743134445641977,
+   "peak_sample": 419,
+   "peak_time_us": 10.475
+  },
+  {
+   "name": "round5_hd",
+   "max_abs_r": 0.030065110349376853,
+   "peak_sample": 19,
+   "peak_time_us": 0.475
+  },
+  {
+   "name": "round3_hd",
+   "max_abs_r": 0.028399998970681645,
+   "peak_sample": 505,
+   "peak_time_us": 12.625
+  }
+ ],
+ "null": {
+  "mean": 0.050246160104185915,
+  "p999": 0.07224805462203335,
+  "max": 0.07257547754571016,
+  "n_perm": 200
+ }
+}

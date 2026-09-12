@@ -1,0 +1,101 @@
+{
+ "h5": "A_fixedkey_K1_N2048_M64.h5",
+ "N": 2048,
+ "T": 2000,
+ "M": 64,
+ "fs_hz": 40000000.0,
+ "crypto_clk_hz": 10000000.0,
+ "smoothed_samples": 4,
+ "predictors": [
+  {
+   "name": "round1_hd",
+   "max_abs_r": 0.07242450056420024,
+   "peak_sample": 1069,
+   "peak_time_us": 26.724999999999998
+  },
+  {
+   "name": "round7_hd",
+   "max_abs_r": 0.06616828602680312,
+   "peak_sample": 739,
+   "peak_time_us": 18.474999999999998
+  },
+  {
+   "name": "round11_hd",
+   "max_abs_r": 0.06569273218559744,
+   "peak_sample": 1982,
+   "peak_time_us": 49.55
+  },
+  {
+   "name": "round5_hd",
+   "max_abs_r": 0.06257878375426534,
+   "peak_sample": 1678,
+   "peak_time_us": 41.95
+  },
+  {
+   "name": "round3_hd",
+   "max_abs_r": 0.05723769609465947,
+   "peak_sample": 360,
+   "peak_time_us": 9.0
+  },
+  {
+   "name": "round2_hd",
+   "max_abs_r": 0.05488902748232767,
+   "peak_sample": 1657,
+   "peak_time_us": 41.425
+  },
+  {
+   "name": "round9_hd",
+   "max_abs_r": 0.05198755068084011,
+   "peak_sample": 941,
+   "peak_time_us": 23.525
+  },
+  {
+   "name": "round6_hd",
+   "max_abs_r": 0.050112929569204254,
+   "peak_sample": 1120,
+   "peak_time_us": 28.0
+  },
+  {
+   "name": "round4_hd",
+   "max_abs_r": 0.04833648841312919,
+   "peak_sample": 1107,
+   "peak_time_us": 27.674999999999997
+  },
+  {
+   "name": "total_hd",
+   "max_abs_r": 0.04692701398237835,
+   "peak_sample": 1134,
+   "peak_time_us": 28.35
+  },
+  {
+   "name": "round10_hd",
+   "max_abs_r": 0.04538738497282162,
+   "peak_sample": 1295,
+   "peak_time_us": 32.375
+  },
+  {
+   "name": "round12_hd",
+   "max_abs_r": 0.04317589828266512,
+   "peak_sample": 230,
+   "peak_time_us": 5.75
+  },
+  {
+   "name": "CTRL_nonce_hw",
+   "max_abs_r": 0.0429714325280847,
+   "peak_sample": 698,
+   "peak_time_us": 17.45
+  },
+  {
+   "name": "round8_hd",
+   "max_abs_r": 0.03852508405450643,
+   "peak_sample": 1324,
+   "peak_time_us": 33.1
+  }
+ ],
+ "null": {
+  "mean": 0.0779261291780504,
+  "p999": 0.11223071651194795,
+  "max": 0.11364463418843179,
+  "n_perm": 200
+ }
+}

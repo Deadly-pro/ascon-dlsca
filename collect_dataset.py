@@ -68,7 +68,13 @@ def main():
                     help='max arm/go attempts per (key, nonce) before declaring flat')
     ap.add_argument('--gain', type=int, default=20)
     ap.add_argument('--offset', type=int, default=0,
-                    help='ADC offset DAC value (raw int; shifts DC baseline down)')
+                    help='scope.adc.offset: samples to SKIP after the trigger '
+                         'before recording. NOT an analog offset DAC — at '
+                         '40 MS/s 700 samples = 17.5 us, which is past the end '
+                         'of the ~3.5-8.5 us encryption, so a large value '
+                         'records only the post-operation settling tail. Keep '
+                         'this small (0-200) and lower --gain instead if the '
+                         'trigger transient rails the ADC.')
     ap.add_argument('--clip-threshold', type=float, default=0.49,
                     help='reject traces with |trace|.max() above this (clipping)')
     ap.add_argument('--std-floor', type=float, default=0.001,
@@ -210,6 +216,9 @@ def main():
         f.attrs['fs_hz'] = args.fs * 1e6
         f.attrs['crypto_clk_hz'] = crypto_freq
         f.attrs['gain_db'] = args.gain
+        f.attrs['adc_offset_samples'] = args.offset
+        f.attrs['adc_offset_note'] = ('scope.adc.offset: samples skipped after '
+                                      'the trigger')
         f.attrs['gain_note'] = 'programmable + ~20 dB fixed external'
         f.attrs['adc_src'] = 'clkgen_x4'
         f.attrs['key_mode'] = key_mode
