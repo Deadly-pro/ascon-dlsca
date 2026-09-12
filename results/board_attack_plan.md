@@ -55,12 +55,14 @@ absent leakage, insufficient trace count.
     N_eff      null     margin   cols recovered
       2,138   0.0656    0.75x    67.4%
      10,000   0.0303    1.63x    90.1%
-     50,000   0.0136    3.65x   100.0%   <- full key
+     50,000   0.0136    3.65x   100.0%   <- threshold, full key
     100,000   0.0096    5.16x   100.0%
+    131,072   0.0084    5.90x   100.0%   <- the Run A configuration
+    500,000   0.0043   11.53x   100.0%
 
 **Threshold: N_eff ~ 50,000.**
 
-    Run A configuration (2048 x M=64) = 131,072   ->  2.6x headroom
+    Run A configuration (2048 x M=64) = 131,072   ->  5.90x margin
 
 ## 5. The board run
 
